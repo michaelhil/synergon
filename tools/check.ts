@@ -360,6 +360,7 @@ if (!fast) {
   for (const [name, script] of [
     ["room component controls", "room-component-controls-check.ts"],
     ["room workspace tools", "room-workspace-tools-check.ts"],
+    ["live screen content", "room-live-content-check.ts"],
   ]) {
     const run = spawnSync("bun", [join(ROOT,"tools",script)], {encoding:"utf8",cwd:ROOT,timeout:process.env.CI ? 240_000 : 120_000});
     const log=(run.stdout + run.stderr).trim().split("\n");
