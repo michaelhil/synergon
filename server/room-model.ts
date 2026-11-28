@@ -8,7 +8,10 @@ import { operatorFields,type OperatorPatch } from "../shared/room-person.ts";
 import { roomCommands } from "../shared/room-commands.ts";
 import { ROOM_SCHEMA, roomPoint, effectiveLighting, LIGHTING_LIMITS, type RoomLighting, type RoomCatalog, type RoomDimensions, type RoomInstance,
   type RoomPerson, type RoomPoint, type RoomRef, type RoomRelease, type RoomScene } from "../shared/room.ts";
-import type { SceneContent } from "../shared/room-content.ts";
+import { appRunId, contentShapeOk, distribute, embeddable, frameAddress, LIVE, orderScreens, screenWhy, validateContent,
+  type ContentContext, type ContentSource, type LiveApp, type LiveItem, type SceneContent, type SeenReport, type Show, type SurfaceInfo } from "../shared/room-content.ts";
+import { newKey, runName } from "../shared/run-name.ts";
+import { loadLiveApps } from "./live-apps.ts";
 import { cleanName } from "./names.ts";
 
 export const ROOM_HISTORY = 200;
@@ -249,6 +252,259 @@ function guard(record: RoomRecord, expected: unknown, keys: string[]) {
     throw new RoomError("stale", "The selected object changed since version " + expected + ", or that version is outside retained history.", "Read state and repeat the intended change at its current version.");
 }
 
+// ---- live screen content (content.*) ---------------------------------------------------------------------------
+
+/** What the open viewers of one scene report, by their private stream token (server memory only, never stored).
+ *  `name` is the token's public alias shown in content.list (the token itself is never shown). */
+export type SeenStore = Map<string, { reports: Record<string, SeenReport>; at: number; name: string }>;
+export interface ContentCtx { content: ContentContext; seen: SeenStore; publicExample: boolean }
+let defaultCtx: ContentCtx | undefined;
+/** Without a context (tests, tools): the committed settings, a local installation, no viewers. */
+const fallbackCtx = () => defaultCtx ??= { content: { apps: loadLiveApps(), mode: "local", self: "http://127.0.0.1" }, seen: new Map(), publicExample: false };
+
+const EDITS = new Set(["content.show", "content.move", "content.clear", "content.restart", "content.set"]);
+const plainObject = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
+const contentHint = "Read content.list for the apps, items, views, sources and offered screens.";
+/** The scene's block as commands edit it: a malformed stored block counts as empty, malformed shows are dropped,
+ *  sources of a kind this release does not know are kept as they are. */
+function editable(scene: RoomScene): SceneContent {
+  const c: SceneContent = { sources: {}, shows: {} };
+  if (!contentShapeOk(scene.content)) return c;
+  const stored = structuredClone(scene.content!) as unknown as { sources: Record<string, unknown>; shows: Record<string, unknown> };
+  for (const [id, s] of Object.entries(stored.sources)) if (plainObject(s)) c.sources[id] = s as unknown as ContentSource;
+  for (const [instance, screens] of Object.entries(stored.shows)) {
+    if (!plainObject(screens)) continue;
+    for (const [screen, show] of Object.entries(screens))
+      if (plainObject(show) && typeof show.source === "string") (c.shows[instance] ??= {})[screen] = show as unknown as Show;
+  }
+  return c;
+}
+const readable = (scene: RoomScene): SceneContent => contentShapeOk(scene.content) ? editable(scene) : { sources: {}, shows: {} };
+function allShows(c: SceneContent) {
+  return Object.entries(c.shows).flatMap(([instance, screens]) => Object.entries(screens).map(([screen, show]) => ({ instance, screen, show })));
+}
+/** Removes the sources no show uses; returns their ids. */
+function pruneSources(c: SceneContent) {
+  const used = new Set(allShows(c).map(s => s.show.source));
+  const removed = Object.keys(c.sources).filter(id => !used.has(id));
+  for (const id of removed) delete c.sources[id];
+  return removed;
+}
+function store(draft: RoomScene, c: SceneContent) {
+  for (const [instance, screens] of Object.entries(c.shows)) if (!Object.keys(screens).length) delete c.shows[instance];
+  if (Object.keys(c.sources).length > LIVE.maxSources) throw new RoomError("too_many", "A scene holds at most " + LIVE.maxSources + " content sources.", "Clear content you no longer need with content.clear.");
+  if (allShows(c).length > LIVE.maxShows) throw new RoomError("too_many", "A scene holds at most " + LIVE.maxShows + " shows.", "Clear content you no longer need with content.clear.");
+  if (!contentShapeOk(c)) throw new RoomError("too_many", "The scene's content block would exceed " + LIVE.maxContentBytes + " bytes.", "Clear content you no longer need with content.clear.");
+  if (!Object.keys(c.sources).length && !Object.keys(c.shows).length) delete draft.content;
+  else draft.content = c;
+}
+function itemOf(ctx: ContentCtx, s: ContentSource | undefined): { app: LiveApp; item: LiveItem } | null {
+  if (!s || s.kind !== "app") return null;
+  const app = ctx.content.apps.apps.find(a => a.id === s.app), item = app?.items.find(i => i.id === s.item);
+  return app && item ? { app, item } : null;
+}
+/** The app-side run id of a source (§3.6), or null (a page, or an item this installation no longer offers). */
+function runIdOf(scene: RoomScene, ctx: ContentCtx, s: ContentSource | undefined) {
+  const found = itemOf(ctx, s);
+  return found && s?.kind === "app" && typeof s.run?.key === "string" ? appRunId(found.item, runName(scene.id, s.run.key)) : null;
+}
+const surfacesOf = (catalog: RoomCatalog, i: RoomInstance): SurfaceInfo[] => catalog.surfaces?.(i) ?? [];
+const screenMembers = (r: RoomRelease) => r.members.filter(m => m.id.startsWith("S_"));
+/** A screen of one placed asset: its S_ members only (exact id, else a unique label or id match). */
+function screenOf(i: RoomInstance, r: RoomRelease, name: string) {
+  const items = screenMembers(r).map(m => ({ id: m.id, label: m.label.replace(/\s*:\s*lit area$/i, "") }));
+  const exact = items.find(m => m.id === name);
+  if (exact) return exact.id;
+  const q = fold(name), hits = items.filter(m => fold(m.label) === q);
+  const near = hits.length ? hits : items.filter(m => fold(m.label).includes(q) || fold(m.id).includes(q));
+  if (near.length === 1) return near[0].id;
+  if (near.length > 1) throw new RoomError("ambiguous", "Several screens of " + i.label + " match " + name + ".", "Choose the exact S_ id from content.list.", near);
+  throw new RoomError("unknown_screen", "No screen of " + i.label + " matches " + name + ".", items.length ? "Read content.list {\"instance\": \"" + i.id + "\"} for its screens." : i.label + " has no screens.");
+}
+function notOffered(i: RoomInstance, screen: string, why: string) {
+  return new RoomError("not_offered", screen + " on " + i.label + " cannot show content: " + why + ".", "Choose a flat screen that faces the operator; content.list says which screens are offered.");
+}
+/** A named screen that can show content, or a refusal with its reason. */
+function offeredScreen(scene: RoomScene, catalog: RoomCatalog, ref: { instance: string; screen: string }) {
+  const i = getInstance(scene, catalog, ref.instance), r = releaseFor(catalog, i.release), screen = screenOf(i, r, ref.screen);
+  const surface = surfacesOf(catalog, i).find(s => s.screen === screen);
+  const why = surface ? screenWhy(surface) : "not a screen with its own geometry";
+  if (why) throw notOffered(i, screen, why);
+  return { instance: i, screen };
+}
+/** Shows that point at an instance or S_ member the scene no longer has (they wait and come back with Undo). */
+function waitingShows(scene: RoomScene, catalog: RoomCatalog, c: SceneContent) {
+  return allShows(c).filter(({ instance, screen }) => {
+    const i = scene.instances.find(x => x.id === instance), r = i && catalog.releases.find(x => x.id === i.release);
+    return !r || !screenMembers(r).some(m => m.id === screen);
+  }).map(({ instance, screen, show }) => ({ instance, screen, source: show.source }));
+}
+const round = (n: number) => Math.round(n * 1000) / 1000;
+
+function contentList(scene: RoomScene, catalog: RoomCatalog, ctx: ContentCtx, instance?: string) {
+  const c = readable(scene), now = Date.now();
+  let items = scene.instances, only: string | undefined;
+  if (instance !== undefined) {
+    // A removed instance's id still answers with its waiting shows.
+    if (c.shows[instance] && !scene.instances.some(i => i.id === instance)) { items = []; only = instance; }
+    else { const i = getInstance(scene, catalog, instance); items = [i]; only = i.id; }
+  }
+  const fresh = [...ctx.seen.values()].filter(v => now - v.at < LIVE.seenTtlMs);
+  const uses = (id: string) => allShows(c).filter(s => s.show.source === id).length;
+  const screens = items.flatMap(i => surfacesOf(catalog, i).map(s => {
+    const why = screenWhy(s), show = c.shows[i.id]?.[s.screen], key = i.id + "/" + s.screen;
+    return { instance: i.id, screen: s.screen, label: s.label, size: s.size.map(round), flat: s.flat,
+      facing: s.facing[2] > LIVE.facingUpLimit ? "up" : "operator", offered: !why, ...(why ? { why } : {}),
+      shows: show ? { source: show.source, ...(show.view !== undefined ? { view: show.view } : {}) } : null,
+      seen: fresh.filter(v => v.reports[key]).map(v => ({ viewer: v.name, ...v.reports[key], at: new Date(v.at).toISOString().replace(/\.\d{3}Z$/, "Z") })) };
+  }));
+  const sources = Object.entries(c.sources).map(([id, s]) => {
+    const n = uses(id);
+    if (s.kind === "app") return { id, kind: s.kind, app: s.app, item: s.item, label: s.label, run: runIdOf(scene, ctx, s), screens: n };
+    if (s.kind === "page") return { id, kind: s.kind, url: s.url, label: s.label, screens: n };
+    return { id, kind: String((s as { kind?: unknown }).kind), label: String((s as { label?: unknown }).label ?? id), screens: n };
+  });
+  const waiting = waitingShows(scene, catalog, c).filter(w => only === undefined || w.instance === only);
+  const { apps, publicSites } = ctx.content.apps;
+  return { version: scene.version, mode: ctx.content.mode, viewers: ctx.seen.size,
+    apps: apps.map(({ id, label, origin, items }) => ({ id, label, origin, items })), publicSites, sources, screens, waiting };
+}
+
+type ContentArgs = { instance?: string; screen?: string; item?: string; app?: string; url?: string; source?: string; view?: string;
+  from: { instance: string; screen: string }; to: { instance: string; screen: string }; content: unknown };
+
+/** The content edits. Returns the reply; the caller records draft.content against scene.content under key "content". */
+function contentEdit(draft: RoomScene, catalog: RoomCatalog, wire: RoomWire, ctx: ContentCtx): unknown {
+  const a = (wire.args ?? {}) as ContentArgs, c = editable(draft);
+  const unknownSource = (id: string) => new RoomError("unknown_source", "The scene has no content source " + id + ".", contentHint);
+  switch (wire.id) {
+    case "content.show": {
+      if ([a.item, a.url, a.source].filter(v => v !== undefined).length !== 1) throw invalid("Give one of item, url or source.");
+      if (a.view !== undefined && a.screen === undefined) throw invalid("A view goes with a screen; without screen an item's views are distributed over the asset's screens.");
+      const i = getInstance(draft, catalog, a.instance!), screens = surfacesOf(catalog, i);
+      const target = a.screen !== undefined ? offeredScreen(draft, catalog, { instance: i.id, screen: a.screen }).screen : undefined;
+      if (!orderScreens(screens).length)
+        throw new RoomError("no_screens", i.label + " has no screen that can show content (only flat screens facing the operator can in this release).", "Choose another asset; content.list lists the offered screens.");
+      let id: string;
+      if (a.item !== undefined) {
+        const apps = ctx.content.apps.apps.filter(x => a.app === undefined || x.id === a.app);
+        if (a.app !== undefined && !apps.length) throw new RoomError("unknown_app", "This installation has no app " + a.app + ".", contentHint);
+        const found = apps.flatMap(app => app.items.filter(it => it.id === a.item).map(item => ({ app, item })));
+        if (found.length > 1) throw new RoomError("ambiguous", "Several apps offer the item " + a.item + ".", "Name the app.", found.map(f => ({ app: f.app.id, item: f.item.id, label: f.item.label })));
+        if (!found.length) throw new RoomError("unknown_item", "No app of this installation offers the item " + a.item + ".", contentHint,
+          ctx.content.apps.apps.flatMap(app => app.items.map(it => ({ app: app.id, item: it.id, label: it.label }))));
+        const { app, item } = found[0];
+        id = Object.keys(c.sources).find(k => { const s = c.sources[k]; return s.kind === "app" && s.app === app.id && s.item === item.id; }) ?? "";
+        if (!id) {
+          id = item.id;
+          for (let n = 2; c.sources[id]; n++) id = item.id.slice(0, 32 - String(n).length - 1) + "-" + n;
+          c.sources[id] = { kind: "app", app: app.id, item: item.id, label: item.label, run: { key: newKey() } };
+        }
+      } else if (a.url !== undefined) {
+        const { mode, self, apps } = ctx.content;
+        const checked = frameAddress(embeddable(a.url), { mode, self, apps: apps.apps, publicSites: apps.publicSites, typed: false });
+        if (!checked.ok) throw new RoomError("address_refused", "The address is refused: " + checked.why + ".", mode === "public"
+          ? "On the public site only these sites are allowed: " + apps.publicSites.join(", ") + " (YouTube and Vimeo links become their players)."
+          : "Use a complete https address (YouTube and Vimeo links become their players).");
+        id = Object.keys(c.sources).find(k => { const s = c.sources[k]; return s.kind === "page" && s.url === checked.href; }) ?? "";
+        if (!id) {
+          id = "page";
+          for (let n = 2; c.sources[id]; n++) id = "page-" + n;
+          c.sources[id] = { kind: "page", url: checked.href, label: new URL(checked.href).hostname };
+        }
+      } else {
+        id = a.source!;
+        if (!c.sources[id]) throw unknownSource(id);
+      }
+      const source = c.sources[id];
+      const assigned: { instance: string; screen: string; view?: string; previous: Show | null }[] = [];
+      const skipped: { instance: string; screen: string; why: string }[] = [];
+      let unplaced: string[] = [];
+      const put = (screen: string, view?: string) => {
+        const shows = c.shows[i.id] ??= {}, previous = shows[screen] ?? null;
+        shows[screen] = { source: id, ...(view !== undefined ? { view } : {}) };
+        assigned.push({ instance: i.id, screen, ...(view !== undefined ? { view } : {}), previous });
+      };
+      if (source.kind === "app") {
+        const found = itemOf(ctx, source);
+        if (!found) throw new RoomError("unknown_item", "This installation no longer offers " + source.app + " › " + source.item + ".", "Clear the source with content.clear, or show another item.");
+        const views = found.item.views.map(v => v.id), shownBy = allShows(c).filter(s => s.show.source === id);
+        if (target !== undefined) {
+          if (a.view !== undefined && !views.includes(a.view))
+            throw new RoomError("unknown_view", found.item.label + " has no view " + a.view + ".", "Choose one of its views.", found.item.views);
+          const elsewhere = new Set(shownBy.filter(s => !(s.instance === i.id && s.screen === target)).map(s => s.show.view));
+          put(target, a.view ?? views.find(v => !elsewhere.has(v)) ?? views[0]);
+        } else {
+          const plan = distribute(screens, views, shownBy.filter(s => s.instance !== i.id).map(s => s.show.view!));
+          for (const p of plan.assigned) put(p.screen, p.view);
+          skipped.push(...plan.skipped.map(s => ({ instance: i.id, ...s })));
+          unplaced = plan.unplaced;
+        }
+      } else if (source.kind === "page") {
+        if (a.view !== undefined) throw invalid("A web page takes no view.");
+        put(target ?? orderScreens(screens)[0].screen);
+      } else throw new RoomError("unsupported_source", "The source " + id + " is of a kind this installation cannot show.", "Clear it with content.clear, or replace the block with content.set.");
+      pruneSources(c); store(draft, c);
+      const run = runIdOf(draft, ctx, source);
+      return { source: id, ...(run ? { run } : {}), assigned, skipped, unplaced };
+    }
+    case "content.move": {
+      const from = offeredScreen(draft, catalog, a.from), to = offeredScreen(draft, catalog, a.to);
+      if (from.instance.id === to.instance.id && from.screen === to.screen) throw invalid("from and to are the same screen.");
+      const x = c.shows[from.instance.id]?.[from.screen], y = c.shows[to.instance.id]?.[to.screen];
+      if (!x && !y) throw new RoomError("nothing_to_move", "Neither screen shows any content.", contentHint);
+      const set = (where: typeof from, show: Show | undefined) => {
+        const shows = c.shows[where.instance.id] ??= {};
+        if (show) shows[where.screen] = show; else delete shows[where.screen];
+      };
+      set(to, x); set(from, y); store(draft, c);
+      return { from: { instance: from.instance.id, screen: from.screen, shows: y ?? null }, to: { instance: to.instance.id, screen: to.screen, shows: x ?? null } };
+    }
+    case "content.clear": {
+      if (a.instance === undefined && a.source === undefined) throw invalid(a.screen === undefined ? "Give instance (and screen), or source." : "A screen needs its instance.");
+      let instance: string | undefined, screen: string | undefined;
+      if (a.instance !== undefined) {
+        const gone = c.shows[a.instance] && !draft.instances.some(i => i.id === a.instance);
+        const i = gone ? undefined : getInstance(draft, catalog, a.instance);
+        instance = i?.id ?? a.instance;
+        if (a.screen !== undefined) {
+          screen = i ? screenOf(i, releaseFor(catalog, i.release), a.screen) : a.screen;
+          if (!i && !c.shows[instance]?.[screen]) throw new RoomError("unknown_screen", a.instance + " has no waiting show on " + a.screen + ".", contentHint);
+        }
+      }
+      if (a.source !== undefined && !c.sources[a.source]) throw unknownSource(a.source);
+      const cleared = allShows(c).filter(s => (instance === undefined || s.instance === instance) && (screen === undefined || s.screen === screen) &&
+        (a.source === undefined || s.show.source === a.source)).map(({ instance, screen }) => ({ instance, screen }));
+      for (const s of cleared) delete c.shows[s.instance][s.screen];
+      const removedSources = pruneSources(c); store(draft, c);
+      return { cleared, removedSources };
+    }
+    case "content.restart": {
+      const s = c.sources[a.source!];
+      if (!s) throw unknownSource(a.source!);
+      if (s.kind !== "app") throw invalid("Only an app source has a run to restart; " + a.source + " is a " + String(s.kind) + ".");
+      const previous = runIdOf(draft, ctx, s);
+      let key = newKey();
+      while (key === s.run?.key) key = newKey();
+      s.run = { key }; store(draft, c);
+      return { source: a.source, run: runIdOf(draft, ctx, s), previous };
+    }
+    case "content.set": {
+      let next: SceneContent;
+      try { next = validateContent(a.content, ctx.content); }
+      catch (e) { if (e instanceof Refusal) throw new RoomError(e.code, e.message, e.hint); throw e; }
+      for (const { instance, screen } of allShows(next)) {
+        const i = draft.instances.find(x => x.id === instance), surface = i && surfacesOf(catalog, i).find(s => s.screen === screen);
+        const why = surface && screenWhy(surface);
+        if (i && why) throw notOffered(i, screen, why);
+      }
+      store(draft, next);
+      return { content: draft.content ?? null, waiting: waitingShows(draft, catalog, next) };
+    }
+  }
+  throw invalid("Unsupported content command");
+}
+
 type Args = {
   allowAssumed?: boolean; instance: string; member: string; x?: number; y?: number; yaw?: number; label?: string; release: string;
   values:Record<string,JointValue|null>; pose?: Record<string, JointValue>; value: JointValue | null; host: string | null; aims?: AimPatch;
@@ -256,7 +512,7 @@ type Args = {
 } & Partial<RoomDimensions>;
 
 /** A candidate record is isolated from its source. The store publishes it only after a successful commit. */
-export function roomCommand(record: RoomRecord, catalog: RoomCatalog, wire: RoomWire, liveConnections = 0) {
+export function roomCommand(record: RoomRecord, catalog: RoomCatalog, wire: RoomWire, liveConnections = 0, ctx: ContentCtx = fallbackCtx()) {
   const spec = roomCommands.find(s => s.id === wire.id);
   if (!spec) throw new RoomError("unknown_command", "Unknown room command " + String(wire.id) + ".", "Use discover to list room commands.");
   const args = wire.args === undefined ? {} : wire.args;
@@ -268,6 +524,7 @@ export function roomCommand(record: RoomRecord, catalog: RoomCatalog, wire: Room
     case "state": return reply({ scene, undoable: undoable(record).map(e => e.version) });
     case "history.list": return reply({entries:record.history.slice().reverse().map(({version,command,key,undoes})=>({version,command,key,undoes}))});
     case "discover": return reply({ ...discover(scene, catalog, a), liveConnections });
+    case "content.list": return reply(contentList(scene, catalog, ctx, a.instance));
     case "measure.distance": return reply(distance(located(scene, catalog, a.from), located(scene, catalog, a.to)));
     case "measure.clearance": return reply(doorClearance(scene, getInstance(scene, catalog, a.instance), catalog.releases));
     case "person.options": {
@@ -319,6 +576,13 @@ export function roomCommand(record: RoomRecord, catalog: RoomCatalog, wire: Room
       throw new RoomError("occupied", "Undo would remove the seated person's station.", "Move or unseat the person before undoing this edit.");
     for (const item of draft.instances) validateInstance(draft, catalog, item);
     result = { undone: undoes };
+  } else if (EDITS.has(wire.id)) {
+    // On the public site the shared example would make every visitor start an app's run: refused there.
+    if (ctx.publicExample) throw new RoomError("content_not_here", "Live screen content is not available in the shared example. Open your own demo, or make a workspace.", "Use demo.open or workspace.create, then show content there.");
+    if (wire.id === "content.set" && wire.expectedVersion === undefined) throw invalid("content.set needs expectedVersion");
+    key = "content"; guard(record, wire.expectedVersion, [key]);
+    result = contentEdit(draft, catalog, wire, ctx);
+    before = scene.content ?? null; after = draft.content ?? null;
   } else if (wire.id === "scene.reset") {
     const items=a.instance ? [getInstance(draft,catalog,a.instance)] : draft.instances;
     guard(record,wire.expectedVersion,items.map(i=>instanceKey(i.id)));
@@ -429,6 +693,11 @@ export function roomCommand(record: RoomRecord, catalog: RoomCatalog, wire: Room
       default: throw invalid("Unsupported edit");
     }
     result = { instance: after ?? { id: i.id, removed: true } };
+    // A removed or swapped asset keeps its shows: they wait (and come back with Undo).
+    if (wire.id === "instances.remove" || wire.id === "instances.swap") {
+      const waiting = waitingShows(draft, catalog, readable(draft)).filter(w => w.instance === i.id).map(({ instance, screen }) => ({ instance, screen }));
+      if (waiting.length) result = { ...(result as object), content: { waiting } };
+    }
   }
   if (isDeepStrictEqual(before, after)) return reply(result);
   const change: Change = { command: wire.id, version: ++draft.version, key, keys, before, index, undoes };

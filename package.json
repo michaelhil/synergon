@@ -11,6 +11,7 @@
     "dist": "bun tools/dist.ts",
     "wiki": "bun tools/wiki.ts",
     "deploy": "bun tools/deploy.ts",
+    "live-apps": "bun tools/live-apps.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test generator"
   },

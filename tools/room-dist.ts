@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { loadRoomLibrary } from "../server/room-library.ts";
+import { frameSrcMeta } from "../server/live-apps.ts";
 import { ROOM_SCHEMA } from "../shared/room.ts";
 import { runtimeParams } from "./bundle.ts";
 import { ROOT } from "./timeline.ts";
@@ -30,7 +31,10 @@ export async function buildRoomRelease(out: string) {
   const tag = createHash("sha256").update(tagged.map(f => readFileSync(join(out, f))).reduce((a, b) => Buffer.concat([a, b]), Buffer.alloc(0))).digest("hex").slice(0, 12);
   const page = readFileSync(join(view, "room.html"), "utf8");
   if (!page.includes('src="/room-entry.js"')) throw new Error("viewer/room.html does not load /room-entry.js");
-  writeFileSync(join(out, "index.html"), page.replace('src="/room-entry.js"', 'src="/release-entry.js?v=' + tag + '"'));
+  if ((page.match(/<head>/g) ?? []).length !== 1) throw new Error("viewer/room.html needs exactly one <head>");
+  // Live screen content: frames may load only the apps' origins and the allowed sites (a framed page cannot navigate
+  // its frame anywhere else). Caddy serves these files as they are, so the policy is a meta tag.
+  writeFileSync(join(out, "index.html"), page.replace("<head>", "<head>\n" + frameSrcMeta()).replace('src="/room-entry.js"', 'src="/release-entry.js?v=' + tag + '"'));
   // One guide for both installations; its local-only section says so itself.
   copyFileSync(join(view, "room-guide.txt"), join(out, "llms.txt"));
   const guide = "workstation-screening.md", source = join(ROOT, "wiki", "85-standards", guide);
@@ -105,6 +109,9 @@ export async function verifyDisposableRoom(origin: string, room: Awaited<ReturnT
   if (!room.releases.every(pin => releases.some((r: {id:string}) => r.id === pin.id))) throw new Error("public catalog pin mismatch");
   const pinned = releases.find((r: { modelUrl: string }) => r.modelUrl);
   if (!pinned?.modelUrl.startsWith("/api/library/") || !(await fetch(origin + pinned.modelUrl, { headers })).ok) throw new Error("library files are not served under /api/library/");
+  const page = await (await fetch(origin + "/", { headers })).text();
+  if (page.split("Content-Security-Policy").length !== 2 || !page.includes("<head>\n" + frameSrcMeta()))
+    throw new Error("index.html lacks the frame-src meta tag of server/live-apps.json right after <head>, or has another policy");
   const catalogFile = await fetch(origin + "/server/room-catalog.json", { headers, redirect: "manual" });
   if (catalogFile.status !== 404) throw new Error("server catalog file is downloadable");
   for (const file of ["standards/workstation-screening.md", "wiki/85-standards/workstation-screening.html"]) {

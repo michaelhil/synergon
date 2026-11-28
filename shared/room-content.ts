@@ -12,6 +12,8 @@ export const LIVE = {
   seenEveryMs: 1_000, seenTtlMs: 60_000, facingUpLimit: 0.7, areaClass: 0.8, flatDepth: 0.002,
   maxContentBytes: 64 * 1024,     // JSON of one scene's content block
   maxLabel: 200,                  // characters of a source label
+  maxReportBytes: 16 * 1024,      // body of one viewer report (POST .../seen)
+  seenPublicPerMinute: 120,       // viewer reports a visitor may send to the public server per minute (own budget, not edits)
 } as const;
 
 /** The identifier patterns of §3.1, shared so that server, viewer and checks agree. */

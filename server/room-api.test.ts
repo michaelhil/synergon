@@ -167,7 +167,7 @@ describe("room workspace", () => {
     const scene = async (r: typeof reader) => {
       const text = new TextDecoder().decode((await r.read()).value);
       expect(text).toContain("event: snapshot");
-      return JSON.parse(text.split("data: ")[1]) as RoomScene;
+      return JSON.parse(text.split("event: snapshot")[1].split("data: ")[1]) as RoomScene;   // a first chunk also carries the viewer token
     };
     expect((await scene(reader)).version).toBe(1);
     expect((await (await app.get(ws.path+"/meta")).json() as any).liveConnections).toBe(1);
