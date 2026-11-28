@@ -169,6 +169,21 @@ writeFileSync(join(oldDist, "version.json"), JSON.stringify(noServer, null, 1) +
   expect("allowed between releases without reads", rollbackRefusal(before, { server }, "l", "t") === null);
   expect("the server rule still holds", /has a server and t has none/.test(rollbackRefusal(reader, { reads: ["content"] }, "l", "t") ?? ""));
 }
+// 11. live screen content: a release that reads content carries the frame-src meta tag of server/live-apps.json
+{
+  const bare = mkdtempSync(join(tmpdir(), "deploy-checks-meta-"));
+  for (const f of readdirSync(oldDist)) if (f !== "index.html") symlinkSync(join(oldDist, f), join(bare, f));
+  writeFileSync(join(bare, "index.html"), readFileSync(join(dist, "index.html"), "utf8").replace(/<meta http-equiv="Content-Security-Policy"[^>]*>\n?/, ""));
+  const s = serveFolder(bare, "/");
+  const r = await run("11. a page without the frame-src meta tag", s, noServer);
+  const c = r.get("frame-src meta tag");
+  expect("the meta tag check fails and is required", c?.ok === false && c.required, c?.detail);
+  const old = await run("   ... and a release that does not read content", s, { ...noServer, reads: [] });
+  expect("is not asked for it", !old.get("frame-src meta tag"), old.checks.map((x) => x.what).join("; "));
+  const good = serveFolder(oldDist, "/"), ok = await run("   ... and the built page", good, noServer);
+  expect("the built page passes", ok.get("frame-src meta tag")?.ok === true, ok.get("frame-src meta tag")?.detail);
+  s.server.stop(true); good.server.stop(true); rmSync(bare, { recursive: true, force: true });
+}
 rmSync(oldDist, { recursive: true, force: true });
 console.log(`\ndeploy checks test: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

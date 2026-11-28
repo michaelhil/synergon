@@ -61,6 +61,7 @@ import { ROOT, timeline } from "./timeline.ts";
 import { sourceRevision } from "./version.ts";
 import { lintWiki, formatFinding } from "./wiki.ts";
 import { ROOM_SCHEMA } from "../shared/room.ts";
+import { frameSrcMeta } from "../server/live-apps.ts";
 
 interface Config { host: string; remoteRoot: string; publicUrl: string; keepReleases: number }
 interface Check { what: string; url: string; ok: boolean; detail: string; required: boolean }
@@ -157,6 +158,16 @@ export async function verifySite(cfg: Config, expect: { version: any; glb: { pat
     return /<html/i.test(body) ? true : "the answer is not an HTML page";
   });
   await html("viewer page", u);
+  // live screen content: a release that reads `content` limits what its frames may load with the meta tag made from
+  // server/live-apps.json, on the homepage and on a scene's page alike, and with no other policy
+  if (Array.isArray(expect.version.reads) && expect.version.reads.includes("content")) await attempt("frame-src meta tag of server/live-apps.json (homepage and workspaces/<id>)", u, true, async () => {
+    for (const p of ["", "workspaces/deploy-check"]) {
+      const r = await get(u + p + bust), body = await r.text();
+      if (p && r.status !== 200) continue;   // a scene's page that is not the viewer page has its own (warning) check below
+      if (body.split("Content-Security-Policy").length !== 2 || !body.includes(frameSrcMeta())) return `${u + p} does not carry exactly ${frameSrcMeta()}`;
+    }
+    return true;
+  });
   await attempt("version.json is the expected one", u + "version.json" + bust, true, async () => {
     const r = await get(u + "version.json" + bust);
     if (r.status !== 200) return `HTTP ${r.status}`;
@@ -308,6 +319,7 @@ const failedRequired = (checks: Check[]) => checks.filter((c) => !c.ok && c.requ
 function printPlannedChecks(cfg: Config, glbPath: string, pages: string[], source = "dist/version.json", server: { revision: string } | null | "if it has one" = null) {
   const u = cfg.publicUrl;
   for (const [what, url] of [["200, HTML", u], [`equals ${source}`, u + "version.json"], [`size and SHA-256 given in ${source}`, u + glbPath], ["200, HTML", u + "wiki/"], ...pages.map((p) => ["200, HTML", u + "wiki/" + p]), ["anything but 200 (the server's code is never served)", u + "server/server.js"], ["anything but 200 (also without the file name)", u + "server/"], ["anything but 200 (also without the slash)", u + "server"]]) say(`  would check: GET ${url}  → ${what}`);
+  say(`  would check: GET ${u} and ${u}workspaces/deploy-check  → exactly the meta tag ${frameSrcMeta()} (for a release whose version.json reads content)`);
   if (server) say(`  would check: GET ${u}api/health  → ${server === "if it has one" ? "for a release with a server: its revision" : `revision ${server.revision}`} within 20 s, asked every second (404 at once, or 502 or another revision after 20 s: a failure)`);
   if (server) {
     const which = server === "if it has one" ? `for a release with server.format ${ROOM_FORMAT}: ` : "";
