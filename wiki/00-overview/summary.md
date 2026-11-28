@@ -2,7 +2,7 @@
 title: Summary
 tldr: Synergon supports work environment layout, design and evaluation, organised as Workspace → Project → Scene. Its first example is a photo-estimated remote operator’s station with an adjustable rig and a seated person, placed in scenes that people and AI agents edit together.
 status: living
-updated: 2026-11-26
+updated: 2026-11-28
 tags: [overview, summary, results]
 ---
 
@@ -10,6 +10,8 @@ tags: [overview, summary, results]
 
 Synergon is organised as **Workspace → Project → Scene** ([workspaces, projects and scenes](../50-implementation/workspaces-projects-scenes.md)). A scene holds a room, its placed assets and optionally a seated operator; the scene editor supports independent placements, component and operator editing, and modular ergonomic screening. Projects carry scenes, named versions and assessment records, and on a local installation transfer between installations. [Scene editor](../50-implementation/room-layout.md) · [Portable projects](../50-implementation/portable-projects.md) · [Screening criteria](../85-standards/workstation-screening.md)
 
+
+**Live screen content** (2026-11-28, step 1, on the branch `live-surfaces`, not yet released): the flat screens of a scene's assets can show a live web page instead of their built-in picture, such as the displays of a Leitbild scenario on the operator desk or a YouTube clip on the wall display. People choose it on the object or the screen and operate a screen with *Use*; AI agents configure what every screen shows, move views between screens, restart and clear, all live and undoable, and read back what each open viewer reports. The curved rig monitors follow in step 2. [Live screen content](../50-implementation/live-screen-content.md)
 
 Synergon is a tool for the layout, design and evaluation of work environments. Its first example is a seated remote operator’s station. The [platform plan](../30-plan/platform-plan.md) covers ergonomic assessment and layouts containing multiple assets.
 
@@ -58,6 +60,7 @@ a private GitHub repository and deployment to the owner's server. The owner's wo
 | The method | measuring from photos, filling gaps honestly, decomposition, the agent process | [pipeline](../40-method/pipeline.md) |
 | The Skill | `modeling-3d-assets-from-references` 0.1.0 and three agent definitions | [skills and agents](../80-reference/skills-and-agents.md) |
 | The platform, step 1 | commands, a server with a live channel and undo, the viewer as a live client, `bun run rig`, the operating Skill, the host's service and setup script | [platform plan](../30-plan/platform-plan.md), [deployment](../50-implementation/deployment.md) |
+| Live screen content | web pages and app views (Leitbild) on the scene's flat screens, operable with *Use*, configured by people and agents with the `content.*` commands | [live screen content](../50-implementation/live-screen-content.md) |
 | This wiki | request, decisions, plan, method, implementation, lessons, results, reference | [index](../index.md) |
 
 ## The verdict in plain words
@@ -127,4 +130,5 @@ As of 2026-11-25 (the model's rows unchanged since 2026-11-23, about 22:00 local
 | Platform step 1 (agent control) | live on the public site since 2026-11-24 (commit `ff90f30`): the server's health check reports the deployed revision, the checks on the host after the release passed, and the two-browser check on the live site passed and left the public scene as it found it. Open: the result of the ten-minute idle test, the owner's own trial, the re-forecast of the later steps ([next steps](../90-next/next-steps.md#0-platform-step-1-the-rollout-and-after)) |
 | Remote commands | Scene commands over HTTP, MCP (`/api/scenes/<id>/mcp`) and `bun run rig`, plus creation of workspaces, projects and scenes; the agent guide `/llms.txt` explains the hierarchy ([remote commands](../80-reference/remote-commands.md), [how-to](../80-reference/agent-how-to.md)) |
 | Workspaces | since 2026-11-27 the top of Workspace → Project → Scene, the same on both installations; the earlier single-station workspaces (2026-11-25 to 2026-11-27, [D-57](../20-decisions/decision-log.md#d-57)) are retired ([workspaces, projects and scenes](../50-implementation/workspaces-projects-scenes.md)) |
+| Live screen content | step 1 (2026-11-28): Release A (the reader) is on `main`; the server, viewer and agent guide are built on the branch `live-surfaces` and are released after Leitbild's side is deployed and the live gates pass ([live screen content](../50-implementation/live-screen-content.md)) |
 | Manikin | live since 2026-11-25 (the dressed operator by default, the clay figure one click away), after the designer's pass and the owner's local preview ([D-44](../20-decisions/decision-log.md#d-44), [the person in the viewer](../50-implementation/person-in-viewer.md)) |

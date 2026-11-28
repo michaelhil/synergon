@@ -2,7 +2,7 @@
 title: Workspaces, projects and scenes
 tldr: Synergon is organised as Workspace → Project → Scene on both installations. A scene is the live layout (room, placed assets, optional seated operator, undo history) and opens at /workspaces/{scene}. One folder-based store holds everything; the older single-station product and the separate room store are retired.
 status: living
-updated: 2026-11-27
+updated: 2026-11-28
 tags: [implementation, server, viewer, workspaces, projects, scenes]
 ---
 
@@ -22,7 +22,7 @@ tags: [implementation, server, viewer, workspaces, projects, scenes]
 |---|---|---|---|
 | Workspace | projects | `workspace.create` (also makes a first project and scene) | My workspace, then Workspace 2 … |
 | Project | scenes, project record, named versions, saved assessments | `project.create` (also makes a first scene) | My project, then Project 2 … |
-| Scene | room, placed assets, optional seated operator, undo history | `project.scene` | Scene 1, Scene 2 … |
+| Scene | room, placed assets, optional seated operator, lighting, what its screens show, undo history | `project.scene` | Scene 1, Scene 2 … |
 
 Scenes made from the menus start as an empty room. Only the demo scene is the furnished example (two operator stations, a freestanding display and a wall display). Names may repeat; agents act by ID and ask when a name matches more than one item.
 
@@ -36,11 +36,11 @@ Scenes made from the menus start as an empty room. Only the demo scene is the fu
 
 ## The demo
 
-Each browser has its own demo scene (`demo.open`), kept in a workspace "Demo" that no list shows. Opening the demo from the homepage resets that scene to the furnished default (a new revision with an empty undo history) and opens it, so a demo always starts fresh and one visitor never resets another's. The demo workspace never lists its scenes, so no visitor can find another's demo. Only making a browser's first demo scene counts against the creation limit.
+Each browser has its own demo scene (`demo.open`), kept in a workspace "Demo" that no list shows. Opening the demo from the homepage resets that scene to the furnished default (a new revision with an empty undo history) and opens it, so a demo always starts fresh and one visitor never resets another's. The demo workspace never lists its scenes, so no visitor can find another's demo. Only making a browser's first demo scene counts against the creation limit. A demo scene starts without [live screen content](live-screen-content.md) but accepts it, so a visitor can try it there.
 
 ## On the public site
 
-The public site is an open sandbox without sign-in. The **Workspaces** menu lists the shared workspace and the workspaces this browser created or opened (kept in the browser). Any other workspace opens only from its link. Creation is rate-limited per visitor and in total; a scene holds at most 300 placed assets and 1 MB. Project files, named versions, comparisons, restores and transfers (export and import) work only on a local installation; the public server refuses them.
+The public site is an open sandbox without sign-in. The **Workspaces** menu lists the shared workspace and the workspaces this browser created or opened (kept in the browser). Any other workspace opens only from its link. Creation is rate-limited per visitor and in total; a scene holds at most 300 placed assets and 1 MB. Project files, named versions, comparisons, restores and transfers (export and import) work only on a local installation; the public server refuses them. Every scene of the shared workspace (the shared example) refuses live screen content edits (`content_not_here`), so no visitor can make every other visitor start a scenario; on the public site only YouTube and Vimeo pages are allowed on screens ([live screen content](live-screen-content.md#security-rules)).
 
 ## Storage
 

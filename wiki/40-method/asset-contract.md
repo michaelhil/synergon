@@ -2,7 +2,7 @@
 title: The asset contract
 tldr: What an asset must satisfy - units, axes, names, parameter records, spec, component modules, materials, GLB, description file, posing and budgets for the rig; and, in section 14, for a character asset (the manikin) - axes, joint names, skins, shape files, compression, budgets and credits.
 status: living
-updated: 2026-11-25
+updated: 2026-11-28
 tags: [contract, format, glb, manifest, parameters]
 ---
 
@@ -178,7 +178,7 @@ export const omitted = { C_x: "reason it is left out on purpose" };   // optiona
 | Function output | one `Part` or a list: `{ material, mesh }` with `mesh = { positions, normals, uvs?, indices }` in the component's own frame |
 | Materials | a key of the palette (section 7); anything else stops the build |
 | Merging | parts of one component with the same material are merged; **each remaining part is one draw primitive** |
-| Surfaces | every part of an `S_` node needs texture coordinates in 0–1 (`kit.sheet`, `kit.arcSheet`): u = 0 at the operator's left (+Y), v = 0 at the top; the face looks toward −X in its own frame |
+| Surfaces | every part of an `S_` node needs texture coordinates in 0–1 (`kit.sheet`, `kit.arcSheet`): u = 0 at the operator's left (+Y), v = 0 at the top; the face looks toward −X in its own frame. Every `S_` surface is also a target for [live screen content](../50-implementation/live-screen-content.md): its size, flatness (thinner than 2 mm) and facing come from the mesh and the posed node frame, and in step 1 only flat surfaces not facing up are offered |
 | Left and right | write the left part and mirror the **mesh** (`kit.mirrorY`) for the right; frames are never mirrored |
 | Numbers | no dimensions in code; read them with `c.p` / `c.arr`. Every read is recorded against the component (a surface's reads count toward its parent component; reads by the node's mount and joint expressions count too) |
 | `omitted` | id → reason. A node with neither a function nor a reason is reported "missing" and fails `check` and `dist` |

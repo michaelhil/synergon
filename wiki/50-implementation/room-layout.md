@@ -48,6 +48,7 @@ The homepage links to `/llms.txt`, the guide written for AI agents acting on the
 | Resolve names or inspect one placement | GET `/api/scenes/{id}/discover?query=monitor` or supply `instance` |
 | Inspect installed pins or command schemas | GET `/api/catalog` or GET `/api/commands` |
 | Run one operation | POST `/api/scenes/{id}/command` with JSON, `X-Synergon: 1`, `id`, `args` and optional `expectedVersion` |
+| Read what the screens show and what each viewer reports | GET `/api/scenes/{id}/content` (= `content.list`) |
 | Subscribe or reconnect | GET `/api/scenes/{id}/live` for authoritative scene snapshots |
 | Use MCP | JSON-RPC at `/api/scenes/{id}/mcp`; set `SYNERGON_SCENE_MCP` to that full address for the repository configuration |
 | Create workspaces, projects and scenes | POST `/api/projects/command` ([remote commands](../80-reference/remote-commands.md#create-and-rename)) |
@@ -71,7 +72,7 @@ For a prismatic joint the positive room axis gives its direction of travel. For 
 
 A release identifies its asset, version and SHA-256 digest of its ordered file inventory. Model geometry, manifest and operator package dependencies belong to the release. Fetch `inventory.json` next to its model URL to inspect file digests. An instance owns its placement and joint overrides. Address a point with an instance and its local member ID. The operator carries an explicit host and host-local targets. Each viewer owns its own camera and selection.
 
-An accepted edit writes the scene and its undo record together in one atomic file write in the project folder. Pass the revision on which an edit is based to detect overlapping changes. The receipt gives the recorded version for targeted undo. Changes to separate placements can proceed independently. A scene's screen content (`content`: which page or app view each flat screen shows, made by a later release) is kept, undone in one step like the lighting, transferred and compared; a malformed block leaves the scene openable. An undo record of a kind this installation does not know (from a newer release) is kept but never offered for undo. Reconnect reads the current snapshot. An unsupported scene format or unavailable pin identifies what must be supplied. When an asset changes, both installations keep its earlier builds (the public server in its library archive, a local installation in `<data>/library-archive`), so a scene pinned to an earlier build still opens; earlier builds are marked retained and are not offered under **Add object**, and the release picker labels them "earlier build". **Swap release** moves a placed asset to the current build. 
+An accepted edit writes the scene and its undo record together in one atomic file write in the project folder. Pass the revision on which an edit is based to detect overlapping changes. The receipt gives the recorded version for targeted undo. Changes to separate placements can proceed independently. A scene's screen content (`content`: which page or app view each flat screen shows, [live screen content](#live-screen-content)) is kept, undone in one step like the lighting, transferred and compared; a malformed block leaves the scene openable. An undo record of a kind this installation does not know (from a newer release) is kept but never offered for undo. Reconnect reads the current snapshot. An unsupported scene format or unavailable pin identifies what must be supplied. When an asset changes, both installations keep its earlier builds (the public server in its library archive, a local installation in `<data>/library-archive`), so a scene pinned to an earlier build still opens; earlier builds are marked retained and are not offered under **Add object**, and the release picker labels them "earlier build". **Swap release** moves a placed asset to the current build. 
 
 ## Lighting
 
@@ -85,13 +86,26 @@ A scene has its own artificial lighting, saved with the scene and changed with o
 
 A design change is an undoable edit. A simulation sends its values with `"live": true`: every viewer follows at once and the value is stored, but it is not an undoable edit and adds no revision, so it never buries a person's own edits (at most 10 a second per scene). For example `{"instance":"desk-a","lamps":{"colour":"#ff2a1a"},"live":true}` for an alarm: the lit strip and its light both turn red. A viewer in daylight sees a dot on the lamp button when the lighting changes; small discs mark the ceiling lights in the lighting view. Switching the lighting view or changing the grid builds the new shaders in the background ("Preparing the lighting."), so the view never freezes. A grid uses at most 12 real light sources: a denser grid shows every fixture but is lit by a coarser grid of the same total brightness. Values are visual (relative brightness), not lux; lights cast no shadows except an asset's own downlights.
 
+## Live screen content
+
+The flat screens of the placed assets can show a live web page instead of their built-in picture: the views of a Leitbild scenario, or any allowed page such as a YouTube clip ([live screen content](live-screen-content.md)). The scene stores which screen shows what, so Undo, versions and transfer apply and every open viewer follows at once. <!-- check against viewer -->
+
+| Where | What |
+|---|---|
+| An object's panel › **Screens** (beside *Lamps*, for an asset with offered screens) | *Shows*: *Built-in pictures*, an app's items, or *Web address…*; an item's views go to the asset's screens, largest first. Then *Restart* and *Remove* and one status line |
+| A screen's card | *Shows* (one screen), *View* (for an app item), one status line with at most one action (*Retry*, *Restart*, *Show*), and *Use* |
+| The screen itself | the page, laid over the screen; a status plate (*Starting…*, *Not answering*, *Content from …*, …) when it is not showing; double-click to **use** it (operate the page), *Done* to leave |
+| Settings | **Live screen content**: off for this browser only; phones start with it off |
+
+Agents use `content.list`, `content.show`, `content.move`, `content.clear`, `content.restart` and `content.set` ([remote commands](../80-reference/remote-commands.md#live-screen-content)). Curved screens (the rig's monitors) and panels that face up keep their built-in picture in this release.
+
 <a id="camera-and-workspace-tools"></a>
 
 ## Camera and scene tools
 
 **Views** in the lower-right corner of the drawing offers an overview, four elevations and a top view. The **lamp** button beside it switches the lighting view on: the daylight is dimmed so the scene's [lighting](#lighting) shows; it is a picture, not a lux calculation. **Operator’s eye** uses the seated eye and its named look target from the same measurement command as the assessment engine. Drag to turn your head and scroll to zoom. Changing the station pose or placement updates the eye position. Select **Operator’s eye** again to return to orbit. Click the operator in 3D or the operator tag in plan to open the station's operator controls.
 
-The panel footer holds **Copy view link**, **Save picture**, **Trace** and **Settings**. A view link opens this scene with its plan centre and zoom or its 3D camera, selected object and component. Pictures are PNGs of the visible plan or 3D drawing. Trace lists recorded layout edits newest first. Settings controls object labels, the floor grid, colours and component visibility. **Agent access** gives the scene MCP endpoint.
+The panel footer holds **Copy view link**, **Save picture**, **Trace** and **Settings**. A view link opens this scene with its plan centre and zoom or its 3D camera, selected object and component. Pictures are PNGs of the visible plan or 3D drawing; with live screens in view, Chrome and Edge ask once to share the tab so the picture includes them, and elsewhere they appear as labelled plates ([live screen content](live-screen-content.md#what-you-see-and-do)). Trace lists recorded layout edits newest first. Settings controls object labels, the floor grid, colours and component visibility. **Agent access** gives the scene MCP endpoint.
 
 **Reset all** restores neutral joint settings, component visibility and the camera. Undo restores the affected joint settings. To transfer a layout and saved versions to a colleague, see [Portable room projects](portable-projects.md).
 

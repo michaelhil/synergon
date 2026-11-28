@@ -39,7 +39,7 @@ not served. A rollback selects the earlier application and leaves the store in p
 | `/`, `/llms.txt` | Homepage and the guide for agents |
 | `/workspaces/<scene>`, `/workspaces/` | Scene editor; without an ID the last scene of this browser, or a start screen |
 | `/api/workspaces`, `/api/workspaces/<id>` | The shared workspace; one workspace's projects and scenes |
-| `/api/scenes/<scene>/state\|command\|live\|mcp\|discover\|meta` | One scene: state, commands, live events, MCP |
+| `/api/scenes/<scene>/state\|command\|live\|mcp\|discover\|meta\|content\|seen` | One scene: state, commands, live events, MCP; what its screens show and the viewers' reports of it ([live screen content](live-screen-content.md)) |
 | `/api/projects/command`, `/api/projects/mcp` | Create and rename workspaces, projects and scenes |
 | `/api/catalog`, `/api/library/<digest>/` | Installed editions and their verified, immutable dependency files |
 | `/standards/workstation-screening.md` | Public criteria read by the assessment engine, also rendered in the [standards wiki](../85-standards/workstation-screening.md) |
@@ -213,6 +213,31 @@ ssh synergon-deploy 'ln -sfn /srv/synergon/releases/<release> /srv/synergon/curr
   systemd starts it again from the release now live.
 - A rollback by hand with the `ln`/`mv` line above bypasses the refusal; use it only to go to a release
   that has a server, once the service exists.
+
+## Live screen content in a release
+
+Since release B of [live screen content](live-screen-content.md) (2026-11-28):
+
+- **The frame policy.** `bun run dist` inserts, right after `<head>` of the release's `index.html`, `<meta http-equiv="Content-Security-Policy" content="frame-src …">` with the app origins and public sites of `server/live-apps.json` (sorted). It sets nothing else: no `default-src`, no `child-src`, so workers, `blob:` and three.js are unaffected. The distribution's own check asserts the tag and that there is no other policy. The local server sends `frame-src https: http://127.0.0.1:* http://localhost:* http://[::1]:*` as a header on its pages instead.
+- **A live check.** For a release whose `version.json` `reads` has `content`, the deploy checks that the homepage (and `workspaces/deploy-check` when that page answers 200) carries exactly the tag of the repository's `live-apps.json`. The dry run lists it among its "would check" lines.
+- **No outbound requests.** The public server may not open any connection to another host (its service already blocks it); `server/no-outbound.test.ts` fails on any network call in the server's code. App item lists are configuration, refreshed by hand with `bun run live-apps refresh <app>` and committed.
+- **Rollback.** `reads: ["content"]` keeps `--rollback` from going back to a release that cannot open what this one stores ([rolling back](#rolling-back)).
+
+<a id="next-admin-run"></a>
+
+## Next admin run
+
+Headers that only an administrator can add, because Caddy serves Synergon's pages as files and a deploy never changes `deploy/synergon.caddy`. None is needed for live screen content step 1; meanwhile the viewer hides *Show* and *Use* when Synergon is itself shown inside another site's frame. Add them to the site block at the next run of the host setup, after checking each on a test release:
+
+| Header | Value | Why |
+|---|---|---|
+| `Content-Security-Policy` | `frame-ancestors 'none'` (in addition to the meta tag's `frame-src`, which stays in the page) | no other site can frame Synergon (frame-ancestors cannot be set by a meta tag) |
+| `X-Frame-Options` | `DENY` | the same, for older browsers |
+| `Permissions-Policy` | deny what no page on a screen needs (for example camera, microphone, geolocation, payment, usb) and delegate nothing to frames | a page on a screen cannot ask for these through Synergon |
+| `Origin-Agent-Cluster` | `?1` | Synergon's page runs in its own process group, apart from pages on the screens |
+| `Cross-Origin-Opener-Policy` | `same-origin-allow-popups` | a window opened by a page cannot reach Synergon's window, while app pages may still open their own popups |
+
+<!-- The exact Permissions-Policy list and COOP value are to be settled at that run; the build plan names the headers, not their values. -->
 
 ## What the server must provide
 

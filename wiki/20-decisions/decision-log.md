@@ -1,8 +1,8 @@
 ---
 title: Decision log
-tldr: 59 decisions, D-01 to D-59, each with context, alternatives, reason, who decided, status and consequences. D-01 to D-20 come from the approved plan, D-21 to D-37 from the first build, D-38 to D-46 from platform step 1 and D-47 to D-55 from agent interface v2 (all 2026-11-23 and 24).
+tldr: 61 decisions, D-01 to D-61, each with context, alternatives, reason, who decided, status and consequences. D-01 to D-20 come from the approved plan, D-21 to D-37 from the first build, D-38 to D-46 from platform step 1 and D-47 to D-55 from agent interface v2 (all 2026-11-23 and 24).
 status: living
-updated: 2026-11-26
+updated: 2026-11-28
 tags: [decisions, log, platform]
 ---
 
@@ -17,7 +17,7 @@ tags: [decisions, log, platform]
 - Platform step 1 (2026-11-24) added D-38 to D-46: the platform plan approved ([D-38](#d-38)); server-sent events plus POST commands ([D-39](#d-39)); undo by entry or request ([D-40](#d-40)); server-made author ids ([D-41](#d-41)); no release split ([D-42](#d-42)); the 800 kB budget for every script ([D-43](#d-43)); no manikin on the public site until approved ([D-44](#d-44)); port 4190 ([D-45](#d-45)); the stream byte budget ([D-46](#d-46)).
 - Agent interface v2 (2026-11-24, "step 1.5") added D-47 to D-52: built here and deployed on the owner's word ([D-47](#d-47)); intent commands in plain words ([D-48](#d-48)); assumed adjustments moved and marked ([D-49](#d-49)); MCP served by the server itself ([D-50](#d-50)); pictures from the browser and views to every local page ([D-51](#d-51)); the meaning of each adjustment next to the page's words ([D-52](#d-52)); a trace of every request in the browser ([D-53](#d-53)); the camera anywhere, a person's eye by stature, and Follow ([D-54](#d-54)); a consent question in the browser ([D-55](#d-55)).
 - The name Synergon, its own subdomain and the wiki at `/wiki` are D-56; public workspaces modelled on Leitbild's are D-57 (both 2026-11-25).
-- [D-59](#d-59) makes the HTTP command registry canonical and adds scoped discovery shared with MCP.
+- [D-59](#d-59) makes the HTTP command registry canonical and adds scoped discovery shared with MCP; [D-60](#d-60) is Workspace → Project → Scene; [D-61](#d-61) puts live web pages on the scene's flat screens, configurable by people and agents.
 - New decisions get the next free number. To retire one, mark it "superseded by D-xx"; never delete or renumber.
 
 ## How to read an entry
@@ -484,3 +484,25 @@ project's working files.
 - **Reason.** Three overlapping models (station workspaces, room "workspaces", local projects) confused visitors and agents. One hierarchy with one store is simpler to explain, to document for agents and to maintain.
 - **Alternatives.** Hierarchical links `/workspaces/{w}/{p}/{s}` (rejected: long, break when a scene moves); keeping SQLite and adding tables (rejected: two stores, versions and transfers rebuilt); listing every public workspace (rejected: the list fills with strangers' workspaces; the public menu shows the shared workspace and the browser's own).
 - **Consequences.** New visitors get a furnished scene in one click; menus show Workspaces, Projects and Scenes. Old `/workspaces/room/{id}` links keep working; old station links show "This scene no longer exists". Project files, versions and transfers stay local-only. Duplicating, deleting and expiring unused sandbox items are deferred.
+
+
+<a id="d-61"></a>
+### D-61 — Live screen content: every screen shows a web page, stored in the scene, configurable by agents (2026-11-28)
+
+- **Decided by / status.** The owner asked for live content on the scene's screens (Leitbild scenarios, any web page), for people to operate it (click displays and procedures, pan and zoom a map) and for an AI agent to configure everything live, screen content and placement, with undo and a way to check what each screen shows. Designed by the coordinator in three proposal rounds with two rounds of independent review (rendering, integration, model and agent, security, UX, build). Step 1 built on the branch `live-surfaces`; in force from its release ([live screen content](../50-implementation/live-screen-content.md)).
+- **What.** Twelve decisions, one line each:
+  1. Every surface shows a web page: one idea for Leitbild, a later Fieldwork, any address.
+  2. Step 1 lays the page over flat screens (a frame placed with its own `matrix3d` under the 3D canvas, a depth-correct hole in the screen); curved screens wait for pictures in step 2.
+  3. Synergon's server never calls an app: app lists are configuration in `server/live-apps.json`, refreshed by a local tool; a test forbids outbound requests.
+  4. The app's page starts its own run (join the named run; if missing or failed, make it fresh under that name), so the contract has no start address.
+  5. The configuration lives in the scene (`content`, beside `lighting`) with one history key, so Undo, versions, export, import and the live channel apply.
+  6. Scenes store "app + item + view", never app addresses, so one scene works locally and on the public site.
+  7. The run name is worked out from the live scene id and a random key, drawn on creation and on *Restart*; Undo restores the key and rejoins; copies get their own run.
+  8. A screen never shows something else instead: it shows a status plate.
+  9. The scenario is chosen on the object (*Screens*); one screen is changed on its card (*Shows*, *View*).
+  10. One way into a screen, *Use* (double-click or the button); outside it the 3D view behaves exactly as before.
+  11. Your apps load at once; other sites after one click per site per browser; the public site allows YouTube and Vimeo only.
+  12. Agents get the same commands as the UI (`content.list`, `show`, `move`, `clear`, `restart`, `set`) plus a read-back of what each open viewer reports.
+- **Reason.** One page per screen covers every source with one mechanism, and laying a real page over the screen is the only route that lets people operate it directly. Keeping the configuration in the scene reuses everything scenes already have (undo, versions, transfer, live updates). A public server that cannot reach the apps, and need not, removes a whole class of failures.
+- **Alternatives.** Drawing pages into textures (pictures) first: no direct operation, deferred to step 2 for curved screens. `CSS3DRenderer`: no single frame can be raised above the canvas for *Use*. A separate configuration file: breaks when instance ids change and needs its own history and transfer. The scene version as the run epoch: depends on how every path numbers versions. Making the canvas transparent to input for *Use*: nearer objects would click through to hidden page controls.
+- **Consequences.** Release A (the reader) shipped first so a rollback can never make a scene unopenable (`version.json` `reads`). The shared example on the public site refuses content edits; demos and own workspaces allow them. Admin-only headers wait for the next admin run ([deployment](../50-implementation/deployment.md#next-admin-run)). Live content in the public demo is an open owner question.

@@ -2,7 +2,7 @@
 title: Glossary
 tldr: Plain-language meanings of every technical term this wiki uses - from asset contract, blockout and camera solve to tier, triangulate and build folder - in one alphabetical table, each with the page where it matters most.
 status: living
-updated: 2026-11-27
+updated: 2026-11-28
 tags: [overview, glossary, reference]
 ---
 
@@ -86,11 +86,13 @@ tags: [overview, glossary, reference]
 | ID colours | A render in which each component has its own flat colour, to check which part is which | [tool reference](../80-reference/tools.md#render-sets) |
 | Independent reader | `tools/glb_inspect.py`: Python code that reads the model file without sharing any code with the writer, so the writer's mistakes cannot hide | [patterns](../60-lessons/patterns.md#p-14) |
 | Invented | The least certain class: a value with no source at all, used as a modelling device (a gap between two surfaces, a pocket depth); only allowed for cosmetic values | [filling gaps](../40-method/filling-gaps.md) |
+| Item, view (live content) | An item is one thing an app offers to Synergon's screens, such as a Leitbild scenario; its views are the pages it can show (a dashboard, a map). Ids and labels are the app's neutral words | [live screen content](../50-implementation/live-screen-content.md) |
 | Joint | A node between two parts that lets the child move: revolute (turns about one axis), prismatic (slides along one axis), ball (turns about three). Has limits and a neutral value | [decomposition](../40-method/decomposition.md#joints) |
 | Kit | The project's own small library of shape operations (box, extrude, revolve, loft, sweep, cage …) | [generator note](../../generator/README.md) |
 | Landmark | A point that can be recognised in photos (a screw, a corner) and picked to measure from | [measuring from photos](../40-method/measuring-from-photos.md) |
 | Left/right check | A check that every left part has a right counterpart (unless marked single) and that the two mirror each other | [checks](../40-method/checks.md#c-09) |
 | Limits, neutral | The lowest and highest values a joint may take, and the value it has as photographed | [asset contract](../40-method/asset-contract.md) |
+| Live screen content | A live web page shown on a flat screen of the 3D scene instead of its built-in picture: an app's view or any allowed page. Stored in the scene; every open viewer follows changes at once | [live screen content](../50-implementation/live-screen-content.md) |
 | Locked | A joint the description file marks as not to be moved without saying so explicitly; used for assumed adjustments. People can still move them in the viewer, with a notice | [viewer](../50-implementation/viewer.md) |
 | Loft | A kit operation that skins a surface through a series of cross-sections; used for cushions, grips and columns | |
 | Look sample | In the plan: one finished component shown to the owner before the rest is shaped. Not done as a gate in this run | [deviations](../30-plan/deviations.md) |
@@ -121,16 +123,19 @@ tags: [overview, glossary, reference]
 | Reviewer (independent) | An agent that did not build the model, makes its own renders and measurements, does not read the builders' notes, and gives a verdict per component | [patterns](../60-lessons/patterns.md#p-15) |
 | Rig A, B, C1, C2 | Neutral names for the photographed stations: A in a van, B the reference rig that was modelled, C1 and C2 in a control room | [wiki conventions](../README.md) |
 | Round | One pass of shaping by the modellers followed by a review. Three rounds were run | [modelling rounds](../50-implementation/modeling-rounds.md) |
+| Run (live content) | One running copy of an app item, shared by all screens that show it. Its name is worked out from the scene's id and a random key; *Restart* draws a new key, Undo brings the old run back | [live screen content](../50-implementation/live-screen-content.md) |
 | Runtime control | A movement made during use, such as joystick deflection or pedal travel; would be driven by a signal in a simulator | [asset contract](../40-method/asset-contract.md#10-three-kinds-of-variable) |
 | Scale | The factor that turns photo measurements into metres; here set by the deck width of 1.50 m | [measurement results](../50-implementation/measurement-results.md#scale-and-closure) |
 | Scene | The lowest level and the thing you edit: a room, its placed assets and optionally a seated operator, with its own revision and undo. Opens at /workspaces/{scene} | [workspaces, projects and scenes](../50-implementation/workspaces-projects-scenes.md) |
 | Seat index point | A standardised reference point of a seat defined by ISO 5353 with a test device. Not available here; the model carries estimated seat references instead | [standards](../80-reference/standards.md) |
 | Seat reference (estimated) | Two reference frames where the seat surface meets the backrest: one fixed on the pedestal, one that moves with every seat adjustment | [standards](../80-reference/standards.md#what-the-asset-carries-instead) |
 | Shape points | Named 3D points measured from the photos to support outlines and profiles (215 of them) | [measuring from photos](../40-method/measuring-from-photos.md) |
+| Show (live content) | What one screen shows: a source (an app item or a web page) and, for an app item, a view. The scene's `content` holds its sources and shows | [live screen content](../50-implementation/live-screen-content.md) |
 | Signature features | Three to five features that make a part recognisable; a modeller writes them down before shaping | [agent process](../40-method/agent-process.md#the-modellers-loop) |
 | Single-view | A basis: one sight line from one photo, made to meet an assumed plane (a deck, a symmetry plane). The assumption is stated in the evidence | [filling gaps](../40-method/filling-gaps.md) |
 | Skill (Agent Skill) | A folder of instructions (`SKILL.md` plus references) that an agent loads for a kind of task; here `modeling-3d-assets-from-references` | [skills and agents](../80-reference/skills-and-agents.md) |
 | Spec | `assets/rig-b/spec/rig.toml`: the component tree, mount frames, joints, reference frames and the check tables | [asset contract](../40-method/asset-contract.md#5-the-spec-specrigtoml) |
+| Status plate | What a live screen shows while its page is not showing: *Starting…*, *Not answering*, *Content from <site>* and so on, never something else | [live screen content](../50-implementation/live-screen-content.md) |
 | Structure from motion | A method that finds matching features across overlapping photos and solves the cameras and some 3D points together; used once, to seed the cameras | [measuring from photos](../40-method/measuring-from-photos.md) |
 | Subagent | An agent started by another agent (here by the coordinator) for one part of the work, with its own brief, returning a report | [agent process](../40-method/agent-process.md) |
 | Tier | How much a value matters: critical (changes reach, posture or vision results), layout (clearances, fit, recognition), cosmetic (appearance only) | [filling gaps](../40-method/filling-gaps.md#the-tier-how-much-a-value-matters) |
@@ -140,6 +145,8 @@ tags: [overview, glossary, reference]
 | Triangle | The smallest piece of a 3D surface; the model's size is counted in triangles (28,070) | |
 | Triangulate | Find a point in 3D where sight lines from two photos meet | [measuring from photos](../40-method/measuring-from-photos.md) |
 | Two-view | A basis: a point triangulated from two photos whose sight lines meet within a few pixels; the most reliable photo measurement | [filling gaps](../40-method/filling-gaps.md) |
+| Use (a live screen) | Operating the page on a screen: double-click it or press *Use*; the view turns to the screen and clicks, drags and keys go to the page until *Done*. Never saved, never seen by others | [live screen content](../50-implementation/live-screen-content.md) |
 | Vendor | A class: a value from a maker's published data (monitor size, pedal pitch) | [filling gaps](../40-method/filling-gaps.md) |
 | Viewer | The web page that shows the model to people and makes every render for the agents | [viewer](../50-implementation/viewer.md) |
+| Viewer report (seen) | What an open browser says each live screen shows (a closed state such as showing or awaiting_click, with the run and view). Agents read it in `content.list` to check a change; it is a report, not proof | [live screen content](../50-implementation/live-screen-content.md) |
 | Workspace | The top level of the hierarchy Workspace → Project → Scene: a named collection of projects. (Before 2026-11-27 the word meant one shared scene; that product is retired.) | [workspaces, projects and scenes](../50-implementation/workspaces-projects-scenes.md) |
