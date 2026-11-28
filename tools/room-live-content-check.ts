@@ -31,8 +31,10 @@ const step = (ok: boolean, what: string, detail = "") => {
   console.log(`${ok ? "ok  " : "FAIL"} ${what}${detail ? `: ${detail}` : ""}`);
   return ok;
 };
+/** CI runners draw WebGL in software, several times slower than a desktop: every wait stretches there. */
+const SLOW = process.env.CI ? 4 : 1;
 async function until<T>(page: Page, expr: string, ms = 8000): Promise<T | null> {
-  const end = Date.now() + ms;
+  const end = Date.now() + ms * SLOW;
   while (Date.now() < end) {
     const v = await page.evaluate(expr).catch(() => null);
     if (v) return v as T;
@@ -41,6 +43,11 @@ async function until<T>(page: Page, expr: string, ms = 8000): Promise<T | null> 
   return null;
 }
 const sleep = (ms: number) => Bun.sleep(ms);
+/** Waits for the element, then clicks it; a missing element fails the step that checks its effect, not the whole run. */
+async function press(page: Page, expr: string): Promise<void> {
+  if (await until(page, `!!(${expr})`)) await page.evaluate(`(${expr}).click()`);
+  else console.error("live screen content: not found to click: " + expr.slice(0, 120));
+}
 const debug = (p: Page) => p.evaluate("window.__synergonLive ? window.__synergonLive() : {}") as Promise<Record<string, {
   state: string; loads: number; framed: boolean; displayed: boolean; hole: boolean; run: string | null; href: string | null; point: [number, number] | null; operable: boolean }>>;
 /** Page px of a frame's layout point (u, v): through the frame's own transform. */
@@ -69,12 +76,12 @@ async function objectRow(p: Page, name: string) {
   await p.evaluate(`document.querySelector('.rm-scroll [title="Close component controls"]')?.click()`);
   const row = `[...document.querySelectorAll('.rm-object-row')].find(b => b.textContent.includes(${JSON.stringify(name)}))`;
   if (!await until(p, `!!${row}`, 4000)) throw new Error("no row " + name + " in the panel: " + await p.evaluate("document.querySelector('.rm-scroll')?.innerText.slice(0, 400)"));
-  await p.evaluate(`${row}.click()`);
+  await press(p, `${row}`);
 }
 const view = async (p: Page, name: string) => {
-  await p.evaluate(`document.querySelector('[aria-label="Views"]').click()`);
+  await press(p, `document.querySelector('[aria-label="Views"]')`);
   await until(p, `[...document.querySelectorAll('.rw-choice')].some(b => b.textContent.startsWith('${name}'))`, 3000);
-  await p.evaluate(`[...document.querySelectorAll('.rw-choice')].find(b => b.textContent.startsWith('${name}')).click()`);
+  await press(p, `[...document.querySelectorAll('.rw-choice')].find(b => b.textContent.startsWith('${name}'))`);
   await Bun.sleep(500);
 };
 const mouse = (p: Page, type: string, x: number, y: number, extra: object = {}) =>
@@ -130,14 +137,14 @@ try {
   step(!!live && unseen && rates.includes(0), "screens out of sight still go live, and are told rate 0 only afterwards", `rates ${rates.join(",")}`);
   // D2: the notice's Undo undoes the edit it announced, by its recorded version; another edit hides the notice
   await A.evaluate(`window.__sent = []; const f0 = window.fetch; window.fetch = (u, o) => { if (o?.body) __sent.push(String(o.body)); return f0(u, o); }`);
-  await A.evaluate(`[...document.querySelectorAll('.rm-notice button')].find(b => b.textContent === 'Undo').click()`);
+  await press(A, `[...document.querySelectorAll('.rm-notice button')].find(b => b.textContent === 'Undo')`);
   const undone = await until(A, `Object.keys(window.__synergonLive()).filter(k => k.startsWith('desk-a/')).length === 0`, 4000);
   const undoBody = JSON.parse((await A.evaluate(`__sent.find(b => b.includes('"undo"')) || 'null'`)) as string) as { args?: { version?: unknown } } | null;
   await A.evaluate(`(() => { const s = [...document.querySelectorAll('summary')].find(s => s.textContent.startsWith('Screens')); s.parentElement.open = true;
     const pick = document.querySelector('select[aria-label="Screens"]'); pick.value = 'item:fake/demo'; pick.dispatchEvent(new Event('change')); })()`);
   const again = await until<string>(A, `(() => { const t = document.querySelector('.rm-notice:not([hidden])')?.innerText || ''; return /on 5 screens/.test(t) ? t : null; })()`, 6000);
   // the desk faces away in this view: the notice says so and offers Look, which turns the view to the desk
-  await A.evaluate(`[...document.querySelectorAll('.rm-notice button')].find(b => b.textContent === 'Look').click()`);
+  await press(A, `[...document.querySelectorAll('.rm-notice button')].find(b => b.textContent === 'Look')`);
   const looked = await until(A, `document.querySelector('.rv-stage').dataset.focusedAsset === 'desk-a' && (() => { const d = window.__synergonLive(); return ${JSON.stringify(desk)}.some(k => d[k]?.displayed); })()`, 6000);
   step(!!again && /face away/.test(again) && !!looked, "after a distribution out of sight the notice says the screens face away, and Look turns the view to them", (again ?? "").replace(/\s+/g, " "));
   const other = (await command("state", {})).result.scene.instances.find((i: { id: string }) => i.id === "station-b");
@@ -148,9 +155,9 @@ try {
     "the notice's Undo undoes the announced edit by its version; a later edit hides the notice", JSON.stringify(undoBody));
   // see the desk's screens (Look focused the desk already)
   if (!await A.evaluate(`document.querySelector('.rv-stage').dataset.focusedAsset === 'desk-a'`)) {
-    await A.evaluate(`document.querySelector('[aria-label="View scope"]').click()`);
+    await press(A, `document.querySelector('[aria-label="View scope"]')`);
     await until(A, `document.querySelector('[aria-label="Focus on Operator desk"]')`);
-    await A.evaluate(`document.querySelector('[aria-label="Focus on Operator desk"]').click()`);
+    await press(A, `document.querySelector('[aria-label="Focus on Operator desk"]')`);
   }
   await until(A, `(() => { const d = window.__synergonLive(); return ${JSON.stringify(desk)}.every(k => d[k]?.displayed); })()`, 8000);
   await sleep(400);
@@ -201,7 +208,7 @@ try {
     const inert = await A.evaluate(`[...document.querySelectorAll('.rv-frames iframe')].every(f => f.hasAttribute('inert') && f.tabIndex === -1 && !f.style.zIndex)`);
     return step(!!left && keys === "k" && inert, "leave Use by " + how + ": keys reach Synergon, frames inert", `keys ${JSON.stringify(keys)}`);
   }
-  await A.evaluate(`document.querySelector('.rv-use-done').click()`);
+  await press(A, `document.querySelector('.rv-use-done')`);
   await outAndKeys("Done");
   // open the big screen's card first, so that a selecting click would be seen
   await A.evaluate(`(() => { const pick = document.querySelector('select[aria-label="Selected component"]'); if (pick) { pick.value = 'S_big_screen_L'; pick.dispatchEvent(new Event('change')); } })()`);
@@ -225,7 +232,7 @@ try {
   await command("content.show", { instance: "wall-display", screen: "S_screen", item: "demo", app: "fake", view: "map" });
   await A.evaluate(`document.querySelector('[aria-label="Return to whole scene"]')?.click()`);
   await until(A, `!document.querySelector('.rv-stage').dataset.focusedAsset`, 5000);
-  await A.evaluate(`document.querySelector('[aria-label="Operator’s eye"]').click()`);
+  await press(A, `document.querySelector('[aria-label="Operator’s eye"]')`);
   await until(A, `document.querySelector('.rv-orbit').dataset.camera === 'operator'`, 8000);
   const ts = "wall-display/S_screen";
   await until(A, `(() => { const d = window.__synergonLive()['${ts}']; return d && d.displayed && d.hole; })()`, 8000);
@@ -251,7 +258,7 @@ try {
     await until(A, `!document.querySelector('.rv-stage').dataset.liveUse`, 2000);
   }
   step(oblique, "Use at an oblique angle (operator's eye, the wall display): click, drag and wheel reach the page; the view is kept", detail4b);
-  await A.evaluate(`document.querySelector('[aria-label="Operator’s eye"]').click()`);
+  await press(A, `document.querySelector('[aria-label="Operator’s eye"]')`);
   await until(A, `document.querySelector('.rv-orbit').dataset.camera !== 'operator'`, 3000);
 
   // 6. a second browser follows content.move and instances.move within 2 s; no frame reloads in either
@@ -282,10 +289,10 @@ try {
   await objectRow(A, "Operator desk");
   const restart = `[...document.querySelectorAll('details')].find(d => d.querySelector('summary')?.textContent.startsWith('Screens'))?.querySelector('.rm-live-actions button')`;
   if (!await until(A, `!!${restart}`, 4000)) throw new Error("no Restart in Operator desk › Screens: " + await A.evaluate("document.querySelector('.rm-scroll').innerText.slice(0, 600)"));
-  await A.evaluate(`${restart}.click()`);
+  await press(A, `${restart}`);
   const restarted = await until<string>(A, `(() => { const r = window.__synergonLive()['${bigL}']?.run; return r && r !== ${JSON.stringify(runBefore)} ? r : null; })()`, 6000);
   const told = await until<string>(A, `(() => { const t = document.querySelector('.rm-notice:not([hidden])')?.innerText || ''; return /Restarted Demo item/.test(t) ? t : null; })()`, 4000);
-  await A.evaluate(`[...document.querySelectorAll('.rm-notice button')].find(b => b.textContent === 'Undo').click()`);
+  await press(A, `[...document.querySelectorAll('.rm-notice button')].find(b => b.textContent === 'Undo')`);
   const back = await until(A, `window.__synergonLive()['${bigL}']?.run === ${JSON.stringify(runBefore)}`, 6000);
   step(!!restarted && !!told && !!back, "Restart: a new run on every screen and a notice; its Undo: the old run again", `${runBefore} → ${restarted}; ${(told ?? "").replace(/\s+/g, " ")}`);
 
@@ -315,7 +322,7 @@ try {
   const refusedLine = await until<string>(A, `(() => { const s = document.querySelector('.rm-component-card .rm-live-status'); return s && /could not start/.test(s.innerText) ? s.innerText : null; })()`, 4000);
   const loads0 = (await debug(A))["station-b/S_ts_screen"]?.loads ?? 0;
   await A.evaluate(`document.querySelector('.rv-frames iframe[data-key="station-b/S_ts_screen"]').dataset.mark = '1'`);
-  await A.evaluate(`[...document.querySelectorAll('.rm-component-card .rm-live-status button')].find(b => b.textContent === 'Retry').click()`);
+  await press(A, `[...document.querySelectorAll('.rm-component-card .rm-live-status button')].find(b => b.textContent === 'Retry')`);
   const reloaded = await until(A, `(() => { const f = document.querySelector('.rv-frames iframe[data-key="station-b/S_ts_screen"]'); return f && !f.dataset.mark && window.__synergonLive()['station-b/S_ts_screen'].state === 'refused'; })()`, 6000);
   const plainSentence = !!refusedLine && !/AJAX|Error|503|\/map/.test(refusedLine) && /Retry/.test(refusedLine) && /Restart/.test(refusedLine);
   step(plainSentence && !!reloaded, "a refused view says \"This view could not start.\" with Retry (reloads the screen) and Restart; no raw app error", `${(refusedLine ?? "").replace(/\s+/g, " ")}; loads before ${loads0}`);
@@ -332,9 +339,9 @@ try {
   step(seen.filter(s => s.state === "showing" && s.run === runNow).length >= 2, "content.list shows seen: showing from both browsers with the app's run id", JSON.stringify(seen));
 
   // 10. the Settings switch removes every frame and reports off
-  await A.evaluate(`document.querySelector('[aria-label="Settings"]').click()`);
+  await press(A, `document.querySelector('[aria-label="Settings"]')`);
   await until(A, `[...document.querySelectorAll('.rw-check')].some(e => e.textContent === 'Live screen content')`);
-  await A.evaluate(`[...document.querySelectorAll('.rw-check')].find(e => e.textContent === 'Live screen content').querySelector('input').click()`);
+  await press(A, `[...document.querySelectorAll('.rw-check')].find(e => e.textContent === 'Live screen content').querySelector('input')`);
   const gone = await until(A, `document.querySelectorAll('.rv-frames iframe').length === 0`, 3000);
   let off = false;
   for (let n = 0; n < 30 && !off; n++) {
@@ -343,7 +350,7 @@ try {
     if (!off) await sleep(150);
   }
   step(!!gone && off, "Settings › Live screen content off: no frames, and this browser reports off");
-  await A.evaluate(`[...document.querySelectorAll('.rw-check')].find(e => e.textContent === 'Live screen content').querySelector('input').click()`);
+  await press(A, `[...document.querySelectorAll('.rw-check')].find(e => e.textContent === 'Live screen content').querySelector('input')`);
   await A.evaluate(`document.querySelector('[aria-label="Close settings"]')?.click()`);
 
   // 11. Save picture without tab capture: live screens become plates, never transparent holes
@@ -354,12 +361,12 @@ try {
   await until(B, `document.querySelector('select[aria-label="Selected component"]')`);
   await B.evaluate(`(() => { const pick = document.querySelector('select[aria-label="Selected component"]'); pick.value = 'S_screen'; pick.dispatchEvent(new Event('change')); })()`);
   await until(B, `[...document.querySelectorAll('.rm-live-status button')].some(b => b.textContent === 'Show')`, 3000);
-  await B.evaluate(`[...document.querySelectorAll('.rm-live-status button')].find(b => b.textContent === 'Show').click()`);
+  await press(B, `[...document.querySelectorAll('.rm-live-status button')].find(b => b.textContent === 'Show')`);
   await until(B, `(() => { const d = window.__synergonLive()['${wall}']; return d && d.displayed && d.hole; })()`, 6000);
   await sleep(300);
   const wallPoint = (await debug(B))[wall]?.point;
   await B.call("Page.setDownloadBehavior", { behavior: "allow", downloadPath: temp });
-  await B.evaluate(`document.querySelector('[aria-label="Save picture"]').click()`);
+  await press(B, `document.querySelector('[aria-label="Save picture"]')`);
   const saved = await until<string>(B, `(() => { const t = document.querySelector('.rm-notice')?.innerText || ''; return /Room picture saved/.test(t) ? t : null; })()`, 15_000);
   let png: string | undefined;
   for (let n = 0; n < 50 && !png; n++) { png = readdirSync(temp).find(f => f.endsWith(".png") && !["desk.png", "oblique.png"].includes(f)); if (!png) await sleep(100); }
