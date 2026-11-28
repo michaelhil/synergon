@@ -97,6 +97,6 @@
 .rv-use-dim { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: rgb(14 20 18 / 42%); }
 .rv-use-bar { position: absolute; z-index: 3; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; max-width: calc(100% - 32px); padding: 5px 5px 5px 15px; border: 1px solid #d3dbd0; border-radius: 999px; background: #fdfdf8f5; box-shadow: 0 6px 22px #10201a33; font: 550 13px/1.3 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #2f4238; }
 .rv-use-bar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rv-use-done { flex: none; min-height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: #23534d; color: #fff; font: 600 13px/1 Inter, system-ui, sans-serif; cursor: pointer; }
-.rv-use-done:hover { background: #1b443f; }
+.rv-use-bar .rv-use-done { flex: none; min-height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: #23534d; color: #fff; font: 600 13px/1 Inter, system-ui, sans-serif; cursor: pointer; }
+.rv-use-bar .rv-use-done:hover { background: #1b443f; }
 .rv-use-done:focus-visible { outline: 2px solid #12695c; outline-offset: 2px; }
