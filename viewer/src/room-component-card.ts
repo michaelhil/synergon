@@ -16,6 +16,8 @@ interface CardOptions {
   item:RoomInstance; release:RoomRelease; part:string;
   beginGesture:BeginPoseGesture;
   apply:(values:Record<string,JointValue|null>)=>Promise<boolean>; dock?:()=>void; edit:ComponentEdit; close:()=>void; pop?:()=>void; placement:()=>void;
+  /** A live screen's Shows, View, status and Use (room-app.ts), for an S_ member offered for live content. */
+  screen?:HTMLElement;
 }
 
 export function componentPanel(title:string,item:RoomInstance,part:string,close:()=>void,pop?:()=>void,dock?:()=>void) {
@@ -29,12 +31,13 @@ export function componentPanel(title:string,item:RoomInstance,part:string,close:
   return card;
 }
 
-export function componentCard({item,release,part,edit,apply,beginGesture,close,pop,dock,placement}:CardOptions) {
+export function componentCard({item,release,part,edit,apply,beginGesture,close,pop,dock,placement,screen}:CardOptions) {
   const member=release.members.find(m=>m.id===part);
-  const card=componentPanel(member?.label || item.label,item,part,close,pop,dock);
+  const card=componentPanel((member?.label || item.label).replace(/:\s*lit area$/i,""),item,part,close,pop,dock);
   const joints = release.joints.filter(j=>member?.controls?.includes(j.id) && (!j.locked || j.assumed));
+  if (screen) card.append(screen);
   if (!joints.length) {
-    card.append(h("p","rm-help","This part is fixed to its object."),action("Object placement",placement,"axis"));
+    card.append(...(screen ? [] : [h("p","rm-help","This part is fixed to its object.")]),action("Object placement",placement,"axis"));
     return card;
   }
   const axes=joints.flatMap(joint=>adjWords(joint).map(word=>({joint,word})));

@@ -12,6 +12,8 @@ import { DEMO_WORKSPACE, firstNote, forgetScene, hierarchy, lastScene, openDemo,
 import { cctColour } from '../../shared/light-colour.ts';
 import { effectiveLighting, type RoomInstance, type RoomJoint, type RoomLighting, type RoomPoint, type RoomRef, type RoomRelease, type RoomScene } from '../../shared/room.ts';
 import {roomOperatorControls} from './room-operator-controls.ts';
+import { embeddable, frameAddress, type AppSource, type SceneContent } from '../../shared/room-content.ts';
+import { liveStorage, screenKey } from './room-content.ts';
 
 type PanelTab = 'layout' | 'measure' | 'assessment';
 type Args = Record<string, unknown>;
@@ -22,6 +24,8 @@ interface Clearance extends Span { opening: Span }
 const shortRelease = (release: RoomRelease) => release.label + ' · v' + release.version + (release.retained ? ' (earlier build)' : '');
 const distanceFormat = new Intl.NumberFormat('en', { minimumFractionDigits: 2, maximumFractionDigits: 3, useGrouping: false });
 const metres = (n: number) => distanceFormat.format(n) + ' m';
+/** Menu labels drop the modeller's ": lit area" suffix. */
+const plainLabel = (label: string) => label.replace(/:\s*lit area$/i, '');
 
 class RoomApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
@@ -172,7 +176,7 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     },
     onPlace: (id, placement) => { void write('instances.move', { instance: id, ...placement }, placementVersion).then(ok => { if (!ok) view.setScene(scene, releases); }); },
     onError: message => tell(message, true),
-  });
+  }, { api: apiRoot(first.id) });
   stage.addEventListener('pointerdown', () => { placementVersion = scene.version; }, true);
   async function focusAsset(id:string|null) {
     try { await view.focusAsset(id); }
@@ -334,6 +338,7 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     }
     if (!release.members.some(m=>m.id===part)) return null;
     return addScopeLink(componentCard({item,release,part,close,pop,dock,beginGesture:poseGestureFor(item,part,popup),
+      screen:screenControls(item,part),
       edit:(joint,value)=>write('pose.set',{instance,member:joint.id,value,...(joint.locked && joint.assumed ? {allowAssumed:true} : {})},base),
       apply:values=>write('pose.apply',{instance,values,...(release.joints.some(j=>j.assumed && j.locked && Object.hasOwn(values,j.id))?{allowAssumed:true}:{})},base),
       placement:()=>{if (popup) clearPopup(popup); if (shell.classList.contains('rm-panel-closed')) open.click(); choose(instance);},
@@ -373,9 +378,10 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     if (tab === 'layout') library = false;
     view.select(selected, member || undefined); renderPanel();
   }
-  function tell(message: string, error = false) {
+  function tell(message: string, error = false, undoable = false) {
     notice.classList.toggle('rm-error', error); notice.classList.remove('rm-notice-top'); notice.setAttribute('role', error ? 'alert' : 'status');
-    notice.replaceChildren(h('span', null, message), iconAction('Dismiss message', () => { notice.hidden = true; }, 'close'));
+    const undoNow = undoable ? action('Undo', () => { notice.hidden = true; void write('undo', {}); }, undefined, 'rm-text-action') : null;
+    notice.replaceChildren(h('span', null, message), ...(undoNow ? [undoNow] : []), iconAction('Dismiss message', () => { notice.hidden = true; }, 'close'));
     notice.hidden = false;
   }
   function command<T>(id: string, args: Args, expectedVersion?: number) {
@@ -388,6 +394,15 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       notice.hidden = true;
       return true;
     } catch (error) { tell(errorText(error), true); return false; }
+  }
+  /** A content command: its result, or null after saying why it was refused. */
+  async function contentWrite<T>(id: string, args: Args): Promise<T | null> {
+    try {
+      const reply = await command<T>(id, args, scene.version);
+      if (reply.version > scene.version) accept(await request<RoomScene>(api + '/state'));
+      notice.hidden = true;
+      return reply.result;
+    } catch (error) { tell(errorText(error), true); return null; }
   }
   function afterTyping(container:HTMLElement,refresh:()=>void) {
     const row=container.querySelector<HTMLElement>('[data-typing]');
@@ -437,6 +452,10 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
   stream.addEventListener('snapshot', event => {
     try { accept(JSON.parse((event as MessageEvent<string>).data) as RoomScene); }
     catch (error) { tell('Could not read the latest layout. ' + errorText(error), true); }
+  });
+  // the token this viewer reports what its screens show with (live screen content, GET …/content's `seen`)
+  stream.addEventListener('viewer', event => {
+    try { const token = JSON.parse((event as MessageEvent<string>).data)?.viewer; if (typeof token === 'string') view.setViewer(token); } catch { /* an older server */ }
   });
   stream.onopen = () => { live.textContent = 'Live'; live.classList.add('rm-connected'); };
   stream.onerror = () => { live.textContent = 'Reconnecting'; live.classList.remove('rm-connected'); };
@@ -637,7 +656,7 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     const controls = h('div', 'rm-detail-group');
     const parts = release.members.filter(m => m.kind==='part');
     if (parts.length) {
-      const pick = select('Selected component', [{ value: '', label: 'Whole object' }, ...(scene.person?.host === item.id ? [{value:'@operator',label:'Operator'}] : []), ...parts.map(m => ({ value: m.id, label: m.label }))], member);
+      const pick = select('Selected component', [{ value: '', label: 'Whole object' }, ...(scene.person?.host === item.id ? [{value:'@operator',label:'Operator'}] : []), ...parts.map(m => ({ value: m.id, label: plainLabel(m.label) }))], member);
       pick.onchange = () => choose(item.id, pick.value);
       controls.append(details(prefix + 'components', 'Components', [field('Selected component', pick)], String(parts.length)));
     }
@@ -649,6 +668,8 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       controls.append(details(prefix + 'joints', 'Adjustments', [field('Joint', picker), jointForm(item, joint)], String(joints.length)));
     }
     if (view.lampCount(item.id)) controls.append(lampControls(item));
+    const screens = screensSection(item);
+    if (screens) controls.append(screens);
     if (release.seat) controls.append(roomOperatorControls({item,release,scene,apiRoot:api,write,bodySlider:f=>bodySlider(item,version,f),details}));
     const versions = select('Installed release', releases.filter(r => !r.retained || r.id === release.id).map(r => ({ value: r.id, label: shortRelease(r) })), release.id);
     const swap = action('Swap release', () => {
@@ -663,6 +684,188 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     const clearance = h('div', 'rm-clearance'); readClearance(item, clearance);
     return [inspector, section('Doorway clearance', clearance), controls];
   }
+  // ---- live screen content: the object's Screens section, the screen card's Shows and View, the hover hint
+  const content = view.content;
+  /** Status lines on screen now; each updates itself when a screen's state changes and leaves when it is gone. */
+  const liveLines = new Set<() => void>();
+  let listShape = '';
+  content.onChange(() => {
+    const l = content.list();
+    const shape = l ? JSON.stringify([l.apps.map(a => [a.id, a.items.map(i => [i.id, i.views.length])]), l.screens.map(x => x.instance + '/' + x.screen + ':' + x.offered)]) : '';
+    if (shape !== listShape) {
+      listShape = shape; afterTyping(scroll, renderPanel);
+      for (const [frame, ref] of popouts) { const card = cardFor(ref.instance, ref.part, frame); if (card && !frame.querySelector('[data-typing]')) replaceComponentCard(frame, card); }
+    }
+    for (const line of [...liveLines]) line();
+  });
+  const sceneContent = (): SceneContent => scene.content && typeof scene.content === 'object' ? scene.content : { sources: {}, shows: {} };
+  /** The address as the server will store it, remembered so that this browser loads it at once. */
+  function rememberTyped(raw: string) {
+    const l = content.list();
+    if (!l) return;
+    const a = frameAddress(embeddable(raw.trim()), { mode: l.mode, self: location.origin, apps: l.apps, publicSites: l.publicSites, typed: true });
+    if (a.ok) liveStorage.addTyped(a.href);
+  }
+  function addressField(instance: string, screen: string | undefined, current: string) {
+    const input = h('input'); input.type = 'url'; input.placeholder = 'https://…'; input.value = current; input.maxLength = 2048;
+    input.setAttribute('aria-label', 'Web address'); input.dataset.focus = 'live-url/' + instance + '/' + (screen ?? '');
+    const go = h('button', 'rm-button rm-primary', 'Show'); go.type = 'submit';
+    const form = h('form', 'rm-live-address', input, go);
+    form.addEventListener('submit', e => {
+      e.preventDefault(); const url = input.value.trim(); if (!url) return;
+      rememberTyped(url);
+      void contentWrite('content.show', { instance, ...(screen ? { screen } : {}), url });
+    });
+    return form;
+  }
+  type Worst = { line: string; act?: { label: string; run: () => void } };
+  /** One sentence for a set of screens, with at most one action. */
+  function statusOf(keys: string[]): Worst | null {
+    if (!keys.length) return null;
+    if (!content.enabled()) return { line: 'Live screen content is off for this browser (Settings).' };
+    const states = keys.map(k => [k, content.state(k)] as const).filter(([, s]) => s) as [string, NonNullable<ReturnType<typeof content.state>>][];
+    if (!states.length) return { line: 'Starting…' };
+    const find = (...names: string[]) => states.filter(([, s]) => names.includes(s.state));
+    const bad = find('not_allowed');
+    if (bad.length) return { line: 'Not allowed here' };
+    const ended = find('ended', 'refused');
+    if (ended.length) {
+      const source = sourceOf(ended[0]![0]);
+      return { line: ended[0]![1].text ?? 'Ended', act: source && sceneContent().sources[source]?.kind === 'app' ? { label: 'Restart', run: () => void contentWrite('content.restart', { source }) } : undefined };
+    }
+    const silent = find('not_answering');
+    if (silent.length) return { line: 'Not answering', act: { label: 'Retry', run: () => { for (const [k] of silent) content.retry(k); } } };
+    const asking = find('awaiting_click');
+    if (asking.length) {
+      const host = asking[0]![1].host, origin = host ? (() => { try { return new URL(sceneSourceUrl(asking[0]![0]) ?? '').origin; } catch { return ''; } })() : '';
+      return { line: 'Content from ' + (host ?? 'another site'), act: origin && content.interactive() ? { label: 'Show', run: () => content.accept(origin) } : undefined };
+    }
+    const showing = find('showing', 'waiting').length, total = states.length;
+    if (showing === total) return { line: total === 1 ? 'Showing' : 'Showing on ' + total + ' screens' };
+    const starting = total - showing;
+    return { line: total === 1 ? 'Starting…' : 'Starting… on ' + starting + ' of ' + total + ' screens' };
+  }
+  const showOf = (key: string) => { const [instance, screen] = key.split('/'); return sceneContent().shows[instance!]?.[screen!]; };
+  const sourceOf = (key: string) => showOf(key)?.source;
+  const sceneSourceUrl = (key: string) => { const s = sourceOf(key), src = s ? sceneContent().sources[s] : undefined; return src?.kind === 'page' ? src.url : undefined; };
+  function statusLine(keys: () => string[]) {
+    const box = h('div', 'rm-live-status'); box.setAttribute('role', 'status'); box.setAttribute('aria-live', 'polite');
+    const paint = () => {
+      if (!box.isConnected && box.dataset.mounted) { liveLines.delete(paint); return; }
+      const w = statusOf(keys());
+      box.hidden = !w;
+      if (!w) { box.replaceChildren(); return; }
+      const text = h('span', null); text.textContent = w.line;
+      box.replaceChildren(text, ...(w.act ? [action(w.act.label, w.act.run, undefined, 'rm-text-action')] : []));
+    };
+    liveLines.add(paint); paint(); queueMicrotask(() => { box.dataset.mounted = '1'; });
+    return box;
+  }
+  const appItems = () => (content.list()?.apps ?? []).filter(a => a.items.length);
+  function screensSection(item: RoomInstance) {
+    const l = content.list();
+    const offered = l?.screens.filter(x => x.instance === item.id && x.offered) ?? [];
+    if (!l || !offered.length) return null;
+    const c = sceneContent(), shows = c.shows[item.id] ?? {};
+    const shown = offered.filter(x => shows[x.screen]).map(x => screenKey(item.id, x.screen));
+    const sources = [...new Set(Object.values(shows).map(s => s.source))].map(id => [id, c.sources[id]] as const).filter(([, s]) => s);
+    const app = sources.find(([, s]) => s!.kind === 'app') as readonly [string, AppSource] | undefined;
+    const page = sources.find(([, s]) => s!.kind === 'page');
+    const pick = h('select'); pick.setAttribute('aria-label', 'Screens'); pick.dataset.focus = 'live-screens/' + item.id;
+    pick.add(new Option('Built-in pictures', 'builtin'));
+    for (const a of appItems()) {
+      const group = h('optgroup'); group.label = a.label;
+      for (const i of a.items) group.append(new Option(i.label, 'item:' + a.id + '/' + i.id));
+      pick.append(group);
+    }
+    pick.add(new Option('Web address…', 'url'));
+    pick.value = app ? 'item:' + app[1].app + '/' + app[1].item : page ? 'url' : 'builtin';
+    const body: Node[] = [field('Shows', pick)];
+    const address = addressField(item.id, undefined, page && page[1]!.kind === 'page' ? page[1]!.url : '');
+    address.hidden = pick.value !== 'url';
+    pick.onchange = () => {
+      if (pick.value === 'url') { address.hidden = false; address.querySelector('input')?.focus(); return; }
+      address.hidden = true;
+      if (pick.value === 'builtin') { void contentWrite('content.clear', { instance: item.id }); return; }
+      const [appId, itemId] = pick.value.slice(5).split('/');
+      const label = l.apps.find(a => a.id === appId)?.items.find(i => i.id === itemId)?.label ?? itemId;
+      void contentWrite<{ assigned: unknown[] }>('content.show', { instance: item.id, item: itemId, app: appId }).then(r => {
+        if (r && r.assigned.length > 1) tell(label + ' on ' + r.assigned.length + ' screens of ' + item.label, false, true);
+      });
+    };
+    body.push(address);
+    if (app) body.push(h('div', 'rm-object-actions',
+      action('Restart', () => void contentWrite('content.restart', { source: app[0] }), undefined, 'rm-text-action'),
+      action('Remove', () => void contentWrite('content.clear', { instance: item.id }), undefined, 'rm-text-action')));
+    else if (shown.length) body.push(h('div', 'rm-object-actions', action('Remove', () => void contentWrite('content.clear', { instance: item.id }), undefined, 'rm-text-action')));
+    body.push(statusLine(() => offered.filter(x => sceneContent().shows[item.id]?.[x.screen]).map(x => screenKey(item.id, x.screen))));
+    return details(item.id + '/screens', 'Screens', body, app ? app[1].label : page ? 'Web address' : 'Built-in');
+  }
+  /** The Shows, View, status and Use controls of one offered screen (its component card). */
+  function screenControls(item: RoomInstance, part: string): HTMLElement | undefined {
+    const l = content.list(), place = l?.screens.find(x => x.instance === item.id && x.screen === part);
+    if (!l || !place?.offered) return undefined;
+    const c = sceneContent(), show = c.shows[item.id]?.[part], key = screenKey(item.id, part);
+    const source = show ? c.sources[show.source] : undefined;
+    const pick = h('select'); pick.setAttribute('aria-label', 'Shows'); pick.dataset.focus = 'live-shows/' + key;
+    pick.add(new Option('Built-in picture', 'builtin'));
+    const inScene = Object.entries(c.sources);
+    if (inScene.length) {
+      const group = h('optgroup'); group.label = 'In this scene';
+      for (const [id, s] of inScene) group.append(new Option(s.label + ' · in this scene', 'source:' + id));
+      pick.append(group);
+    }
+    for (const a of appItems()) {
+      const items = a.items.filter(i => !inScene.some(([, s]) => s.kind === 'app' && s.app === a.id && s.item === i.id));
+      if (!items.length) continue;
+      const group = h('optgroup'); group.label = a.label;
+      for (const i of items) group.append(new Option(i.label, 'item:' + a.id + '/' + i.id));
+      pick.append(group);
+    }
+    pick.add(new Option('Web address…', 'url'));
+    pick.value = show ? 'source:' + show.source : 'builtin';
+    const address = addressField(item.id, part, source?.kind === 'page' ? source.url : '');
+    address.hidden = true;
+    pick.onchange = () => {
+      if (pick.value === 'url') { address.hidden = false; address.querySelector('input')?.focus(); return; }
+      address.hidden = true;
+      if (pick.value === 'builtin') void contentWrite('content.clear', { instance: item.id, screen: part });
+      else if (pick.value.startsWith('source:')) void contentWrite('content.show', { instance: item.id, screen: part, source: pick.value.slice(7) });
+      else { const [appId, itemId] = pick.value.slice(5).split('/'); void contentWrite('content.show', { instance: item.id, screen: part, item: itemId, app: appId }); }
+    };
+    const box = h('div', 'rm-live-screen', field('Shows', pick), address);
+    if (source?.kind === 'app' && show) {
+      const views = l.apps.find(a => a.id === source.app)?.items.find(i => i.id === source.item)?.views ?? [];
+      const viewPick = select('View', views.map(v => ({ value: v.id, label: v.label })), show.view);
+      viewPick.dataset.focus = 'live-view/' + key;
+      viewPick.onchange = () => void contentWrite('content.show', { instance: item.id, screen: part, source: show.source, view: viewPick.value });
+      box.append(field('View', viewPick));
+    }
+    if (show) {
+      box.append(statusLine(() => sceneContent().shows[item.id]?.[part] ? [key] : []));
+      if (content.interactive()) {
+        const use = action('Use', () => content.use(key), 'cursor', 'rm-live-use');
+        use.title = 'Operate this screen: click, drag and scroll in it. Done, Esc or a click outside leaves.';
+        const sync = () => { if (!use.isConnected && use.dataset.mounted) { liveLines.delete(sync); return; }
+          const s = content.state(key); use.disabled = !(s?.operable && s.state === 'showing'); };
+        liveLines.add(sync); sync(); queueMicrotask(() => { use.dataset.mounted = '1'; });
+        box.append(use);
+      }
+    }
+    return box;
+  }
+  // "Double-click to use" next to the pointer over an operable live screen
+  const hint = h('div', 'rm-live-hint', 'Double-click to use'); hint.hidden = true; hint.setAttribute('aria-hidden', 'true');
+  stage.append(hint);
+  let pointer: [number, number] = [0, 0], pressed = false;
+  const placeHint = () => {
+    const key = content.hovered();
+    hint.hidden = !key || pressed || !!content.using();
+    if (!hint.hidden) { hint.style.left = pointer[0] + 'px'; hint.style.top = pointer[1] + 'px'; }
+  };
+  stage.addEventListener('pointermove', e => { const r = stage.getBoundingClientRect(); pointer = [e.clientX - r.left, e.clientY - r.top]; pressed = e.buttons !== 0; placeHint(); });
+  stage.addEventListener('pointerleave', () => { hint.hidden = true; });
+  content.onChange(placeHint);
   function jointForm(item: RoomInstance, joint: RoomJoint) {
     const value = item.pose[joint.id] ?? joint.neutral, angular = joint.type !== 'prismatic';
     const units = angular ? '°' : 'm', scale = angular ? 180 / Math.PI : 1;

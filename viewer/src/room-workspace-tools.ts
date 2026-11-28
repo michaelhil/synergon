@@ -176,7 +176,7 @@ export function mountRoomWorkspaceTools(o: ToolsOptions) {
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-        o.notify("Room picture saved.");
+        o.notify("Room picture saved." + (blob.note ? " " + blob.note : ""));
       })
       .catch(report);
   });
@@ -326,6 +326,7 @@ export function mountRoomWorkspaceTools(o: ToolsOptions) {
     body.append(
       field("Colours", colors),
       check("Object labels", d.labels, (on) => view.setDisplay({ ...view.display(), labels: on })),
+      check("Live screen content", view.content.enabled(), (on) => view.content.setEnabled(on)),
     );
     if (!view.focusedAsset())
       body.append(check("Floor grid", d.grid, (on) => view.setDisplay({ ...view.display(), grid: on })));
