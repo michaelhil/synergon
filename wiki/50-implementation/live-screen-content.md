@@ -35,34 +35,38 @@ Whether a screen is **offered** (can show content) comes from the release's own 
 
 ## What you see and do
 
-<!-- check against viewer: the words below were read from the viewer package before its merge (Screens, Shows, View, Built-in picture(s), Web address…, Restart, Remove, Use, Done, Starting…, Showing on n screens, Not answering, Retry, Ended, Show, Content from …, Not allowed here, Live screen content, Double-click to use, Using …). Re-check them after the merge. -->
+**A Leitbild scenario on the operator desk.** In the object list click *Operator desk*. Its panel shows **Screens** first and open, right under *Placement* (in *Show one asset*, at the top of the asset's controls). In *Shows* choose *Leitbild › Off-site power restoration*. The five flat displays say *Starting… (up to 30 s)*, then show the live displays, the most important on the largest screens. A note says "Off-site power restoration on 5 screens of Operator desk" with *Look* (turns the view to the desk) and *Undo*; when the desk's screens face away from the current view, the note says so ("(they face away from this view)"). The note hides by itself after 12 s or at the next edit. The keyboard's touch panel keeps its built-in picture. Under the menu: *Restart* and one status line ("Starting… on 2 of 5 screens", "Live on 5 screens" with a green dot, or the worst state with its action). To give the screens their built-in pictures back, choose *Built-in pictures* in the same menu; there is no separate Remove.
 
-**A Leitbild scenario on the operator desk.** In the object list click *Operator desk*. Its panel has a section **Screens** beside *Lamps*. In *Shows* choose *Leitbild › Off-site power restoration*. The five flat displays say *Starting…*, then show the live displays, the most important on the largest screens. A note says "Off-site power restoration on 5 screens of Operator desk" with *Undo*. The keyboard's touch panel keeps its built-in picture. Under the menu, *Restart* and *Remove*, and one status line ("Starting… on 2 of 5 screens", "Showing on 5 screens", or the worst state with its action).
+**Screens out of view still start.** A screen that is out of sight, facing away or off the edge still loads its page and goes live; only once the app has said it is live (or ended) is the page told to pause while unseen. So turning to the desk later shows a running scenario, not a fresh wait.
 
-**The map on the wall.** Click the wall display's screen. Its card has *Shows* (*Built-in picture*, the sources already in this scene marked "· in this scene", each app's items, *Web address…*) and, for an app item, *View*. Pick *Map*.
+**The map on the wall.** Click the wall display's screen. Its card (titled *Screen*) has *Shows* (*Built-in picture*, the sources already in this scene under *In this scene*, each app's other items, *Web address…*) and, for an app item, *View*. Pick *Map*. A screen card that shows one view of an item with more views offers *Spread over all N screens of <asset>*, which distributes the item over that asset as above.
 
-**Operate a screen.** Double-click a live screen (the pointer shows "Double-click to use"), or press *Use* on its card. The view turns square to the screen, the rest of the stage dims and a bar says "Using Map · Done". Click faceplates, step procedures, drag and wheel the map. *Done*, a click outside the screen, or Esc in the page (when the page did not use it) turns the view back. Nothing about *Use* is saved or seen by others; what you do in the app is shared, as in the app itself. In the operator's-eye view the camera stays where it is: it is the operator's real view. Outside *Use* every page is inert: drag still orbits, the wheel still zooms the room and a click still selects.
+**Operate a screen.** Double-click a live screen (the pointer shows "Double-click to use"), or press *Use* on its card (it is greyed with "Not showing yet" until the page is live). The view turns square to the screen, the rest of the stage dims, the view tools hide and a bar says "Using Map · Done"; the footer says "Click outside the screen or press Done to leave", and the card's button becomes *Done*. Click faceplates, step procedures, drag and wheel the map. *Done*, a click anywhere outside the screen (it neither selects nor orbits), Esc, or an Esc the page itself did not use turns the view back and gives the keyboard back to Synergon. Nothing about *Use* is saved or seen by others; what you do in the app is shared, as in the app itself. In the operator's-eye view the camera stays where it is: it is the operator's real view. Outside *Use* every page is inert: drag still orbits, the wheel still zooms the room and a click still selects.
 
-**The next participant.** *Operator desk › Screens › Restart*. The screens say *Starting…* while Leitbild prepares a fresh run (allow up to half a minute), so press it before the participant sits down. *Undo* brings the earlier run back.
+**The next participant.** *Operator desk › Screens › Restart*. A note says "Restarted Off-site power restoration. A fresh run starts within 30 s." with *Undo*, and the screens say *Starting…* while Leitbild prepares the fresh run, so press it before the participant sits down. *Undo* brings the earlier run back.
 
 **Returning.** Open the scene: the screens say *Starting…* and then show the same run where it was left. A Leitbild run continues until *Restart*, or until it has stood unwatched for 24 hours.
 
-**Any web page.** *Shows › Web address…*, paste the link, *Show*. A page you add yourself loads at once in your browser. In anyone else's browser, and for pages an agent adds, the screen first says *Content from youtube-nocookie.com* and the card offers **Show**: one click per site per browser, remembered for every scene of this installation.
+**Any web page.** *Shows › Web address…*, paste the link, *Load*. Without a chosen screen it goes to the asset's largest screen, and a note says which ("YouTube video on Large display, left", with *Undo*). A page you add yourself loads at once in your browser. In anyone else's browser, and for pages an agent adds, the screen first shows its name (for example *YouTube video*) with "Select it, then press Show", and the screen's card says *Content from www.youtube-nocookie.com* with **Show**: one click per site per browser, remembered for every scene of this installation. Pages are named for people: *YouTube video*, *Vimeo video*, or the host without "www.".
 
-**Status plates.** A screen whose content is not showing shows a plate, never something else:
+**Status plates.** A screen whose content is not showing shows a plate, never something else. Plates are neutral white on dark, never tinted by the screen or the selection:
 
-| What happened | On the screen | Action on the card |
+| What happened | On the screen | Status line and action on the card |
 |---|---|---|
-| The app has not said "live" yet | *Starting…* | — |
-| No greeting from an app page in 30 s, or a plain page not loaded in 20 s | *Not answering* | *Retry* |
-| The app reports the run ended or refused (full, unknown item) | *Ended*, or the app's sentence | *Restart* |
-| A site not yet accepted in this browser | *Content from <site>* | *Show* |
-| Not allowed on this installation (for example an imported address) | *Not allowed here* | — |
-| More than 12 live screens in view | the item's name, dimmed | — |
+| The page has not said "live" yet | *Starting… (up to 30 s)* for an app item, *Starting…* for a page | *Starting…* |
+| Showing | the page itself | *Live* (green dot) |
+| No greeting from an app page in 30 s, or a plain page not loaded in 20 s | *Not answering* | *Not answering* · *Retry* |
+| The app refused the view (busy, full, a part it cannot show in a frame) | *This view could not start.* | the same · *Retry* (reloads the screen), and *Restart* on the screen's card |
+| The app reports the run ended | *The scenario has ended.* | the same · *Restart* |
+| A site not yet accepted in this browser | the page's name and "Select it, then press Show" | *Content from <host>* · *Show* |
+| Not allowed on this installation (for example an imported address) | *Not allowed here* | *Not allowed here* |
+| More than 12 live screens | the item's name, dimmed | — |
 
-**Your own switch.** *Settings › Live screen content* turns it off for you alone (the screens show their built-in pictures). Phones start with it off. When Synergon is itself shown inside another site's frame, *Show* and *Use* are hidden.
+When the app adds its own reason (Leitbild's refusal of its map in a foreign frame, for example), it appears as a small second line only if it reads as a plain sentence; error codes, addresses and stack text are never shown.
 
-**Save picture.** With live screens in view, *Save picture* asks Chrome or Edge once to share this tab and saves the picture as you see it. Where that is not possible, the live screens appear as labelled plates and the note says "Live screens are shown as labels. Use your system's screenshot to include them."
+**Your own switch.** *Settings › Live screen content* ("In this browser only. Off shows the built-in pictures.") turns it off for you alone; the status lines then say "Live screen content is off for this browser (Settings).". Phones start with it off. When Synergon is itself shown inside another site's frame, *Show* and *Use* are hidden.
+
+**Save picture.** With live screens in view, *Save picture* asks Chrome or Edge once to share this tab and saves the picture as you see it. Where that is not possible, the live screens appear as labelled plates ("<item> · <view>") and the note says "Live screens are shown as labels. Use your system's screenshot to include them."
 
 ## What an agent does
 
@@ -178,7 +182,7 @@ The constants live in `shared/room-content.ts` (`LIVE`) and at the top of `viewe
 
 - `server/live-content.test.ts`: the address check against hostile input, the YouTube and Vimeo rewrite, the run name's test vectors, distribution on the real desk and rig, every command with undo, reports, routes and the public budget.
 - `server/no-outbound.test.ts`: no network calls in the server's code.
-- The live screen content browser check in `bun run check` (a fake app page on another origin: frames, holes, stacking, *Use*, a second browser following, Restart and Undo, the click for another site, reports, the switch, Save picture, a lost graphics context). <!-- check against viewer: the check is in the viewer package; confirm its name and step list after the merge. -->
+- The browser check *live screen content* in `bun run check` (`tools/room-live-content-check.ts`, 22 steps in about 18 s): a fake app page on another origin (`tools/live-provider.ts`); five frames on the desk with the notice; screens out of sight go live and pause only afterwards; *Look* and the face-away note; Undo by version; stacking and inert frames; an orbit drag over a live screen; *Use* straight on and at an oblique angle in the operator's eye, left by *Done*, a click outside and the page's leave; a second browser following `content.move` without reloads; Restart and its Undo; the click for another site; a refused view's sentence with Retry; `seen` from both browsers; the switch; Save picture's fallback; a lost graphics context; no errors in either browser.
 - The deploy's live check of the meta tag (above).
 
 ## Deferred

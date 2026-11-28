@@ -49,7 +49,7 @@ Over HTTP: `POST /api/scenes/<id>/command` with `Content-Type: application/json`
 | "put the scenario on the desk" / "a clip on the wall" | `content.list`, then `content.show {"instance": "desk-a", "item": "offsite-power"}` (views go largest screen first, then the operator's left to right); one screen: add `"screen"` and `"view"`; a page or YouTube/Vimeo link: `{"instance": "wall-display", "url": "https://…"}` |
 | "swap these two screens", "move the map to the wall" | `content.move {"from": {"instance", "screen"}, "to": {"instance", "screen"}}` (swaps, or moves to an empty screen) |
 | "start it again for the next participant" | `content.restart {"source": "offsite-power"}`: a new run (up to half a minute to start); undo rejoins the earlier run |
-| "back to the normal pictures" | `content.clear {"instance"}`, `{"instance", "screen"}` or `{"source"}` |
+| "back to the normal pictures" | `content.clear {"instance"}`, `{"instance", "screen"}` or `{"source"}` (in the viewer: *Screens › Shows › Built-in pictures*) |
 | Copy a screen setup to another scene | read `scene.content` from `state`, then `content.set {"content": …}` with `expectedVersion` (required) |
 | Where the screens are | the assets carrying them move with `instances.*`, a screen tilts with `pose.set`; shows follow the asset and wait while it is removed |
 | Assess | use [assessing-synergon](../assessing-synergon/SKILL.md) |
@@ -68,7 +68,7 @@ back"), the scene link, and what is estimated or assumed. Distances are point es
 to the centimetre or degree.
 
 For screen content, report which view went to which screen, what was skipped and why, any click the user must make
-(*Show* on a screen's card for a page from another site), and what `seen` confirms: read `content.list` again a few
+(for a page from another site: select the screen, then *Show* on its card; to operate a screen: double-click it or *Use*, then *Done*, a click outside or Esc), and what `seen` confirms: read `content.list` again a few
 seconds after the change; with `viewers: 0` nothing is confirmed. Reports come from any open browser, so say "the
 open viewers report", not "proven".
 

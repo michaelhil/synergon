@@ -59,16 +59,19 @@ A fresh run, for example before the next participant: content.restart {"source":
 Copy a setup: read scene.content from state in one scene, then content.set {"content": {"sources": {...}, "shows": {...}}, "expectedVersion": <version>} in another whose instance ids match. expectedVersion is required. The copy runs its own copy of each item.
 Placement: the screens' assets are moved, turned, added, swapped and removed with instances.move, instances.add, instances.swap and instances.remove, and a screen tilted with pose.set, as usual; every viewer follows and each is undoable. What a screen shows follows its asset. A removed or swapped asset keeps its shows: they wait (the reply of instances.remove or instances.swap has content.waiting) and come back with Undo.
 
+What the user sees (use these words when you tell them what to do). Selecting an asset with offered screens opens its Screens section first: a Shows menu (Built-in pictures, the apps' items, Web address... with Load), Restart for an app item, and a status line such as "Live on 5 screens". Choosing Built-in pictures there removes the content. After a distribution a note offers Look (turns the view to the asset) and Undo; after Restart a note says "A fresh run starts within 30 s." A screen's card has Shows, View, the status line with Retry, Restart or Show, Use, and "Spread over all N screens of <asset>". To operate a screen the user double-clicks it or presses Use; Done, a click outside the screen or Esc leaves. Settings > Live screen content turns it off in that browser only.
+
 Check what the screens really show. A stored show is not proof that it displays. Each open viewer reports, per screen, one closed state, and content.list shows the reports of the last 60 seconds under seen [{viewer, state, run, view, at}]:
 - showing: the page is on the screen (with run and view as the app's page itself reported them);
 - starting: loading, or the app is preparing its run;
 - waiting: the app is reconnecting;
-- ended, refused: the app's run ended or was refused (offer content.restart);
+- refused: the app could not start this view (the screen says "This view could not start."; the user can press Retry, or you restart the source);
+- ended: the app's run ended ("The scenario has ended."; offer content.restart);
 - not_answering: no answer from the page (the user can press Retry on the screen's card);
-- awaiting_click: a web page from another site waits for the user to press Show on the screen's card (once per site per browser); tell the user;
+- awaiting_click: a web page from another site waits for the user: the screen says "Select it, then press Show"; they click the screen and press Show on its card (once per site per browser); tell the user;
 - not_allowed: this installation does not allow that address;
 - off: that viewer switched live content off in Settings.
-After a change, allow a few seconds, read content.list again and report seen per screen. Say what no viewer has confirmed. With viewers 0 nothing can be confirmed. Anyone with the scene's link can send reports, so say "the open viewers report", not "it is proven".
+Screens out of a viewer's sight still load and go live; they pause only after going live, so seen covers them too. After a change, allow a few seconds (an app item may take up to 30 s), read content.list again and report seen per screen. Say what no viewer has confirmed. With viewers 0 nothing can be confirmed. Anyone with the scene's link can send reports, so say "the open viewers report", not "it is proven".
 
 Rules.
 - Match what the user names to an asset. If it does not name exactly one asset with offered screens (for example "Station A's desk" when the desk is a separate asset), list the candidates and ask. "The scenario" means the scene's only app source if there is one, else the app's only item; otherwise ask.
@@ -81,7 +84,7 @@ Rules.
 Examples (each POST /api/scenes/{id}/command with {"id", "args", "expectedVersion"}; MCP names use underscores: content_show).
 1. A Leitbild scenario on the operator desk: content.list {"instance": "desk-a"} -> content.show {"instance": "desk-a", "item": "offsite-power"} -> assigned: dashboard on S_big_screen_L, unit-1 on S_big_screen_R, then the three small screens; skipped: S_keyboard_touch (faces up); unplaced: map. Tell the user which view went where and what was skipped.
 2. The map on the wall display, continuing the same run: content.show {"instance": "wall-display", "item": "offsite-power"} -> assigned: map on S_screen.
-   A YouTube clip there instead: content.show {"instance": "wall-display", "url": "https://www.youtube.com/watch?v=<11-character id>"} -> source page, assigned S_screen. A page an agent adds waits in every browser: the screen says "Content from www.youtube-nocookie.com" until the user presses Show on its card (seen: awaiting_click), once per site per browser.
+   A YouTube clip there instead: content.show {"instance": "wall-display", "url": "https://www.youtube.com/watch?v=<11-character id>"} -> source page, assigned S_screen. A page an agent adds waits in every browser: the screen shows "YouTube video" with "Select it, then press Show", and its card says "Content from www.youtube-nocookie.com" with Show (seen: awaiting_click), once per site per browser.
 3. Swap the two big screens: content.move {"from": {"instance": "desk-a", "screen": "S_big_screen_L"}, "to": {"instance": "desk-a", "screen": "S_big_screen_R"}}. Move the grid view to the wall: content.move {"from": {"instance": "desk-a", "screen": "S_small_screen_3"}, "to": {"instance": "wall-display", "screen": "S_screen"}} (the wall's map goes to that desk screen in exchange).
 4. The next participant: content.restart {"source": "offsite-power"} -> run run-ext-<new>, previous run-ext-<old>. Every screen of that source starts the new run.
 5. Back to the built-in pictures: content.clear {"instance": "desk-a"}, or content.clear {"source": "offsite-power"} for every screen that shows it.

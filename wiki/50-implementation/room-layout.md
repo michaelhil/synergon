@@ -88,13 +88,13 @@ A design change is an undoable edit. A simulation sends its values with `"live":
 
 ## Live screen content
 
-The flat screens of the placed assets can show a live web page instead of their built-in picture: the views of a Leitbild scenario, or any allowed page such as a YouTube clip ([live screen content](live-screen-content.md)). The scene stores which screen shows what, so Undo, versions and transfer apply and every open viewer follows at once. <!-- check against viewer -->
+The flat screens of the placed assets can show a live web page instead of their built-in picture: the views of a Leitbild scenario, or any allowed page such as a YouTube clip ([live screen content](live-screen-content.md)). The scene stores which screen shows what, so Undo, versions and transfer apply and every open viewer follows at once.
 
 | Where | What |
 |---|---|
-| An object's panel › **Screens** (beside *Lamps*, for an asset with offered screens) | *Shows*: *Built-in pictures*, an app's items, or *Web address…*; an item's views go to the asset's screens, largest first. Then *Restart* and *Remove* and one status line |
-| A screen's card | *Shows* (one screen), *View* (for an app item), one status line with at most one action (*Retry*, *Restart*, *Show*), and *Use* |
-| The screen itself | the page, laid over the screen; a status plate (*Starting…*, *Not answering*, *Content from …*, …) when it is not showing; double-click to **use** it (operate the page), *Done* to leave |
+| An object's panel › **Screens** (first and open, under *Placement*, for an asset with offered screens) | *Shows*: *Built-in pictures* (also how content is removed), an app's items, or *Web address…* with *Load*; an item's views go to the asset's screens, largest first, and a note offers *Look* and *Undo*. Then *Restart* and one status line (*Starting…*, *Live on 5 screens*, …) |
+| A screen's card (*Screen*) | *Shows* (one screen), *View* (for an app item), one status line with at most one action (*Retry*, *Restart*, *Show*), *Use* (*Done* while in use), and *Spread over all N screens of <asset>* when one view of a larger item shows there |
+| The screen itself | the page, laid over the screen; a status plate (*Starting…*, *Not answering*, *This view could not start.*, *The scenario has ended.*, "Select it, then press Show", *Not allowed here*) when it is not showing; double-click to **use** it (operate the page); *Done*, a click outside or Esc to leave |
 | Settings | **Live screen content**: off for this browser only; phones start with it off |
 
 Agents use `content.list`, `content.show`, `content.move`, `content.clear`, `content.restart` and `content.set` ([remote commands](../80-reference/remote-commands.md#live-screen-content)). Curved screens (the rig's monitors) and panels that face up keep their built-in picture in this release.
