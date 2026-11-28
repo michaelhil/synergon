@@ -6,11 +6,17 @@ import { createRoomLibrary } from "../server/room-installed.ts";
 import { PROJECT_BODY_BYTES } from "../shared/project.ts";
 import { loadRoomLibrary } from "../server/room-library.ts";
 import { createRoomApi } from "../server/room-api.ts";
+import { loadLiveApps } from "../server/live-apps.ts";
+import type { LiveApp } from "../shared/room-content.ts";
 import { LOCAL_HOSTS } from "../server/http-guards.ts";
 import { runtimeParams } from "./bundle.ts";
 import { ROOT } from "./timeline.ts";
 
-export async function serveRoom({ port, dataDir, emptyLibrary = false }: { port: number; dataDir: string; emptyLibrary?: boolean }) {
+/** Pages of the local installation may frame any https page and loopback http (live screen content, §3.12). */
+export const LOCAL_FRAME_POLICY = "frame-src https: http://127.0.0.1:* http://localhost:* http://[::1]:*";
+
+/** `apps` replaces the apps of live screen content (tests; otherwise server/live-apps.json or SYNERGON_APPS). */
+export async function serveRoom({ port, dataDir, emptyLibrary = false, apps }: { port: number; dataDir: string; emptyLibrary?: boolean; apps?: LiveApp[] }) {
   mkdirSync(dataDir, { recursive: true });
   const viewRoot = join(ROOT, "viewer");
   const [library, bundle] = await Promise.all([
@@ -20,7 +26,7 @@ export async function serveRoom({ port, dataDir, emptyLibrary = false }: { port:
   ]);
   if (!bundle.success) throw new Error(bundle.logs.map(String).join("\n"));
   let wikiDirectory: string | undefined;
-  const api = createRoomApi({ dataDir, catalog: library.catalog });
+  const api = createRoomApi({ dataDir, catalog: library.catalog, apps: loadLiveApps({ apps }) });
   const scripts = new Map(bundle.outputs.map(o => ["/" + basename(o.path), o]));
   const html = Bun.file(join(viewRoot, "room.html"));
   const staticFiles = new Map([
@@ -38,7 +44,7 @@ export async function serveRoom({ port, dataDir, emptyLibrary = false }: { port:
       if (pathname.startsWith("/api/") || pathname === "/mcp") return api.fetch(request);
       if (!["GET","HEAD"].includes(request.method)) return new Response(null, { status: 405 });
       if (pathname === "/" || /^\/(?:workspaces(?:\/room)?|projects)(?:\/[^/]+)?\/?$/.test(pathname)) {
-        return new Response(html, { headers: { "Link": '</llms.txt>; rel="help", </api/commands>; rel="service-desc"', "Cache-Control": "no-cache" } });
+        return new Response(html, { headers: { "Link": '</llms.txt>; rel="help", </api/commands>; rel="service-desc"', "Cache-Control": "no-cache", "Content-Security-Policy": LOCAL_FRAME_POLICY } });
       }
       if (pathname.startsWith("/wiki/")) {
         let relative = decodeURIComponent(pathname.slice(6));

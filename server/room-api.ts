@@ -2,13 +2,16 @@
 // (server/project-store.ts). A scene is the live layout: room, placed assets, optional seated operator, undo history.
 // An edit and its bounded undo history are written together in one synchronous step.
 import { Database } from "bun:sqlite";
+import { createHash, getRandomValues } from "node:crypto";
 import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { roomCommands } from "../shared/room-commands.ts";
 import { ROOM_SCHEMA, type RoomCatalog, type RoomScene } from "../shared/room.ts";
 import { LIMITS } from "./limits.ts";
 import { NameError, isId } from "./names.ts";
-import { RoomError, parseRoom, roomCommand, type RoomRecord, type RoomWire } from "./room-model.ts";
+import { RoomError, parseRoom, roomCommand, type ContentCtx, type RoomRecord, type RoomWire, type SeenStore } from "./room-model.ts";
+import { LIVE, LIVE_PATTERNS, SEEN_STATES, type LiveApps, type SeenReport } from "../shared/room-content.ts";
+import { loadLiveApps } from "./live-apps.ts";
 import { PROJECT_BODY_BYTES } from "../shared/project.ts";
 import { projectCommands } from "../shared/project-commands.ts";
 import { ProjectError } from "./project-package.ts";
@@ -20,6 +23,8 @@ interface RoomApiOptions {
   dataDir: string; catalog: RoomCatalog; publicMode?: boolean; standardsPath?: string;
   /** Called before a project command that creates something; false refuses it (the public rate limit). */
   allowCreate?: (req: Request) => boolean;
+  /** The apps and allowed sites of live screen content; the committed server/live-apps.json when absent. */
+  apps?: LiveApps;
 }
 const CREATES = new Set(["workspace.create", "project.create", "project.scene", "workspace_create", "project_create", "project_scene"]);
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "cache-control": "no-store" } });
@@ -53,9 +58,11 @@ async function body(req: Request, limit: number = LIMITS.bodyBytes): Promise<unk
   } finally { clearTimeout(timer); reader.releaseLock(); }
 }
 
-export function createRoomApi({ dataDir, catalog, publicMode = false, standardsPath, allowCreate }: RoomApiOptions) {
+export function createRoomApi({ dataDir, catalog, publicMode = false, standardsPath, allowCreate, apps = loadLiveApps({ public: publicMode }) }: RoomApiOptions) {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const listeners = new Map<string, Set<(event: Uint8Array) => void>>();
+  // Live screen content: what each open viewer reports per screen, by its stream's private token (memory only).
+  const seen = new Map<string, SeenStore>(), lastSeen = new Map<string, number>();
   const encoder = new TextEncoder();
   const event = (scene: RoomScene) => encoder.encode("id: " + scene.version + "\nevent: snapshot\ndata: " + JSON.stringify(scene) + "\n\n");
   const ends = new Set<() => void>();
@@ -70,7 +77,13 @@ export function createRoomApi({ dataDir, catalog, publicMode = false, standardsP
           controller.enqueue(bytes);
         };
         group.add(send);
-        controller.enqueue(event(room));
+        // The viewer's private token for its screen reports (POST .../seen), before the first snapshot.
+        const token = Buffer.from(getRandomValues(new Uint8Array(12))).toString("hex");
+        let viewers = seen.get(room.id);
+        if (!viewers) seen.set(room.id, viewers = new Map());
+        viewers.set(token, { reports: {}, at: 0, name: "v" + createHash("sha256").update(token).digest("hex").slice(0, 6) });
+        // One chunk with the first snapshot, so a reader that takes a chunk per event still finds the snapshot first.
+        controller.enqueue(Buffer.concat([encoder.encode("event: viewer\ndata: " + JSON.stringify({ viewer: token }) + "\n\n"), event(room)]));
         const hb = setInterval(() => {
           if ((controller.desiredSize ?? 0) <= 0) { stop(); return; }
           controller.enqueue(encoder.encode(": heartbeat\n\n"));
@@ -78,6 +91,7 @@ export function createRoomApi({ dataDir, catalog, publicMode = false, standardsP
         stop = () => {
           clearInterval(hb);
           group.delete(send); if (!group.size) listeners.delete(room.id);
+          viewers.delete(token); lastSeen.delete(token); if (!viewers.size) seen.delete(room.id);
           ends.delete(stop); req.signal.removeEventListener("abort", stop);
           try { controller.close(); } catch { /* Reader already cancelled. */ }
         };
@@ -119,12 +133,15 @@ export function createRoomApi({ dataDir, catalog, publicMode = false, standardsP
     if (hits.length >= 10) return false;
     hits.push(now); liveHits.set(id, hits); return true;
   };
-  const change = (id: string, wire: RoomWire) => {
+  /** The content context of one request: the settings, public or local, Synergon's own origin, the scene's reports. */
+  const contentCtx = (id: string, self: string): ContentCtx => ({ content: { apps, mode: publicMode ? "public" : "local", self },
+    seen: seen.get(id) ?? new Map(), publicExample: publicMode && projects.location(id).workspace.id === DEFAULT_WORKSPACE });
+  const change = (id: string, wire: RoomWire, self: string) => {
     const current = read(id);
     try {
       if (wire.id === "lighting.set" && obj(wire.args) && wire.args.live === true && !liveAllowed(id))
         throw new RoomError("rate_limited", "At most 10 live lighting values a second per scene.", "Send fewer updates, or combine them.");
-      const { record, result, recorded, live } = roomCommand(current, catalog, wire, listeners.get(id)?.size ?? 0);
+      const { record, result, recorded, live } = roomCommand(current, catalog, wire, listeners.get(id)?.size ?? 0, contentCtx(id, self));
       if (recorded !== null || (live && record !== current)) projects.edit(id, () => record);
       return { scene: record.scene, publish: recorded !== null || (live && record !== current), receipt: { ok: true, version: record.scene.version, recorded, result } };
     } catch (e) {
@@ -132,7 +149,7 @@ export function createRoomApi({ dataDir, catalog, publicMode = false, standardsP
       return { scene: null, publish: false, receipt: { ok: false, version: current.scene.version, error: e.wire() } };
     }
   };
-  const run = async (id: string, wire: RoomWire) => {
+  const run = async (id: string, wire: RoomWire, self: string) => {
     if (wire.id.startsWith("assessment.")) {
       const { assessmentCommand } = await import("./assessment.ts");
       // Reading, evaluating and saving form one synchronous step after optional module loading.
@@ -149,10 +166,41 @@ export function createRoomApi({ dataDir, catalog, publicMode = false, standardsP
         }
       }
     }
-    const { scene, publish: send, receipt } = change(id, wire);
+    const { scene, publish: send, receipt } = change(id, wire, self);
     if (scene && send) publish(scene);
     return receipt;
   };
+
+  /** POST .../seen: one viewer's whole report, closed states and ids only (§3.8). Never an edit, never stored. */
+  function report(id: string, data: unknown): Response {
+    if (!projects.owns(id)) throw missing();
+    if (!obj(data) || Object.keys(data).some(k => k !== "viewer" && k !== "screens") || typeof data.viewer !== "string" || !obj(data.screens))
+      return fail(400, "invalid_report", "Send {viewer, screens: {\"<instance>/<S_ id>\": {state, run?, view?}}}.");
+    const viewer = seen.get(id)?.get(data.viewer);
+    if (!viewer) return fail(404, "no_viewer", "No open live stream has this viewer token.", "Open the scene's live stream and use the token of its viewer event.");
+    const entries = Object.entries(data.screens);
+    if (entries.length > LIVE.maxShows) return fail(400, "invalid_report", "At most " + LIVE.maxShows + " screens in one report.");
+    const shows = projects.read(id).scene.content;
+    const reports: Record<string, SeenReport> = {};
+    for (const [key, value] of entries) {
+      const [instance, screen, extra] = key.split("/");
+      if (extra !== undefined || !LIVE_PATTERNS.instance.test(instance ?? "") || !LIVE_PATTERNS.screen.test(screen ?? ""))
+        return fail(400, "invalid_report", "A report key is <instance>/<S_ id>: " + key.slice(0, 100));
+      if (!obj(value) || Object.keys(value).some(k => !["state", "run", "view"].includes(k)) || !SEEN_STATES.includes(value.state as never) ||
+        (value.run !== undefined && (typeof value.run !== "string" || !LIVE_PATTERNS.run.test(value.run))) ||
+        (value.view !== undefined && (typeof value.view !== "string" || !LIVE_PATTERNS.view.test(value.view))))
+        return fail(400, "invalid_report", "A screen's report is {state, run?, view?} with state one of " + SEEN_STATES.join(", ") + ".");
+      // A screen the scene no longer shows anything on (the report crossed an edit) is dropped, not refused.
+      const stored = (shows as { shows?: Record<string, Record<string, unknown>> } | undefined)?.shows?.[instance!];
+      if (!obj(stored) || !obj(stored[screen!])) continue;
+      reports[key] = { state: value.state as SeenReport["state"], ...(value.run !== undefined ? { run: value.run as string } : {}), ...(value.view !== undefined ? { view: value.view as string } : {}) };
+    }
+    const now = Date.now(), last = lastSeen.get(data.viewer) ?? 0;
+    if (now - last < LIVE.seenEveryMs * 0.9) return fail(429, "rate_limited", "At most one report a second per viewer.", "Send the whole report again after a second.");
+    lastSeen.set(data.viewer, now);
+    viewer.reports = reports; viewer.at = now;
+    return json({ ok: true });
+  }
 
   async function fetch(req: Request): Promise<Response> {
     const url = new URL(req.url), path = url.pathname.replace(/\/$/, "");
@@ -186,23 +234,25 @@ export function createRoomApi({ dataDir, catalog, publicMode = false, standardsP
         if (!isId(w[1])) throw missing();
         return json(projects.tree(w[1]));
       }
-      const m = /^\/api\/scenes\/([^/]+)(?:\/(state|command|live|mcp|discover|meta))?$/.exec(path);
+      const m = /^\/api\/scenes\/([^/]+)(?:\/(state|command|live|mcp|discover|meta|content|seen))?$/.exec(path);
       if (!m || !isId(m[1])) throw missing();
       const [, id, action = "state"] = m;
-      if (action === "state" || action === "live" || action === "discover" || action === "meta") {
+      if (action === "state" || action === "live" || action === "discover" || action === "meta" || action === "content") {
         if (req.method !== "GET") return method();
         const record = read(id);
         const liveConnections = listeners.get(id)?.size ?? 0;
         if (action === "meta") return json({id, name:record.scene.name, version:record.scene.version, liveConnections, ...projects.location(id)});
         if (action === "discover") return json(roomCommand(record, catalog, { id: "discover", args: Object.fromEntries(url.searchParams) },liveConnections).result);
+        if (action === "content") return json(roomCommand(record, catalog, { id: "content.list", args: Object.fromEntries(url.searchParams) }, liveConnections, contentCtx(id, url.origin)).result);
         return action === "live" ? live(req, record.scene) : json(record.scene);
       }
       if (req.method !== "POST") return method();
+      if (action === "seen") return report(id, await body(req, LIVE.maxReportBytes));
       const data = await body(req);
-      if (action === "mcp") { if (!projects.owns(id)) throw missing(); return await roomMcp(data, wire => run(id, wire)); }
+      if (action === "mcp") { if (!projects.owns(id)) throw missing(); return await roomMcp(data, wire => run(id, wire, url.origin)); }
       if (!obj(data) || typeof data.id !== "string" || Object.keys(data).some(k => !["id", "args", "expectedVersion"].includes(k)))
         return fail(400, "invalid_command", "Send {id,args,expectedVersion?}.");
-      return json(await run(id, { id: data.id, args: data.args, expectedVersion: data.expectedVersion }));
+      return json(await run(id, { id: data.id, args: data.args, expectedVersion: data.expectedVersion }, url.origin));
     } catch (e) {
       if (e instanceof ProjectError) return fail(e.status,e.code,e.message,e.hint);
       if (e instanceof RequestError) return fail(e.status, e.code, e.message);

@@ -10,6 +10,8 @@ import { LIMITS } from "./limits.ts";
 import { createRoomApi } from "./room-api.ts";
 import { openPublicRoomLibrary } from "./room-public-library.ts";
 import { blockKey, LOCAL_HOSTS, RateWindow, visitorKey } from "./http-guards.ts";
+import { loadLiveApps } from "./live-apps.ts";
+import { LIVE } from "../shared/room-content.ts";
 
 const fail = (status: number, code: string, message: string) =>
   Response.json({ ok: false, error: { code, message } }, { status, headers: { "cache-control": "no-store" } });
@@ -35,11 +37,13 @@ const allWrites = new RateWindow(LIMITS.editsPerSecondTotal, 1_000);
 const creates = new RateWindow(LIMITS.workspacesPerHourPerVisitor, 3_600_000);
 const blockCreates = new RateWindow(LIMITS.workspacesPerHourPerBlock, 3_600_000);
 const allCreates = new RateWindow(LIMITS.workspacesPerDayTotal, 86_400_000);
-const windows = [reads, writes, blockWrites, allWrites, creates, blockCreates, allCreates];
+// Viewer reports of live screen content (POST .../seen) have their own budget: they are never edits.
+const reports = new RateWindow(LIVE.seenPublicPerMinute, 60_000);
+const windows = [reads, writes, blockWrites, allWrites, creates, blockCreates, allCreates, reports];
 // The visitor of each request in flight, for the creation limit that the scene API asks about.
 const visitors = new WeakMap<Request, { visitor: string; block: string }>();
 const api = createRoomApi({
-  dataDir: roomData, catalog, publicMode: true, standardsPath: join(release, "server", "standards", "workstation-screening.md"),
+  dataDir: roomData, catalog, publicMode: true, apps: loadLiveApps({ public: true }), standardsPath: join(release, "server", "standards", "workstation-screening.md"),
   allowCreate: req => {
     const who = visitors.get(req);
     return !!who && creates.hit(who.visitor) && blockCreates.hit(who.block) && allCreates.hit("*");
@@ -70,6 +74,8 @@ async function handle(req: Request, ip: string): Promise<Response> {
   if (req.method === "GET" || req.method === "HEAD") {
     if (!reads.hit(visitor)) return fail(429, "rate_limited", "Too many reads. Try again in a minute.");
     if (path === "/api/health") return Response.json({ ok: true, revision, mode, public: true, format: ROOM_SCHEMA }, { headers: { "cache-control": "no-store" } });
+  } else if (req.method === "POST" && path.endsWith("/seen")) {
+    if (!reports.hit(visitor)) return fail(429, "rate_limited", "Too many viewer reports. Try again in a minute.");
   } else {
     if (!writes.hit(visitor) || !blockWrites.hit(block) || !allWrites.hit("*")) return fail(429, "rate_limited", "Too many writes. Try again later.");
     const disk = statfsSync(roomData);
