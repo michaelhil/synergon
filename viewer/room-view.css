@@ -43,10 +43,10 @@
 .rv-north { fill: #536357; }
 .rv-orbit { position: absolute; inset: 0; touch-action: none; }
 .rv-orbit canvas { touch-action: none; }
-.rv-orbit-tags { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.rv-orbit-tags { position: absolute; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; }
 .rv-orbit-tag { position: absolute; transform: translate(-50%,-100%); padding: 2px 5px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 550 11px/1.4 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color: #34453d; background: rgb(251 251 245 / 92%); border-radius: 2px; }
 .rv-orbit-tag[data-active] { color: #0b6252; box-shadow: inset 0 -1px #37917a; }
-.rv-status { position: absolute; inset: auto auto 12px 50%; transform: translateX(-50%); max-width: min(75%,520px); padding: 6px 12px; border: 1px solid #d6ddd2; border-radius: 5px; background: #fdfdf8; font-size: 12px; color: #465a4e; text-align: center; pointer-events: none; }
+.rv-status { position: absolute; z-index: 4; inset: auto auto 12px 50%; transform: translateX(-50%); max-width: min(75%,520px); padding: 6px 12px; border: 1px solid #d6ddd2; border-radius: 5px; background: #fdfdf8; font-size: 12px; color: #465a4e; text-align: center; pointer-events: none; }
 
 /* Bottom-rail tools and drawing controls occupy separate landmarks on desktop and touch layouts. */
 .rw-toolbar { width:100%; display:flex; align-items:center; gap:5px; }
@@ -88,3 +88,15 @@
 .rv-progress-count { flex: none; color: #6b7a70; font-variant-numeric: tabular-nums; }
 .rv-progress-close:hover { background: #eef2ec; }
 .rv-progress-close:focus-visible { outline: 2px solid #12695c; outline-offset: 1px; }
+
+/* Live screen content (room-frames.ts). The frames lie under the canvas (z-index 1) in a layer that must not form a
+   stacking context (no z-index, transform, opacity or filter on it); one frame is raised to 2 while it is used, the
+   dim between them, the Use bar above all three. */
+.rv-orbit canvas { position: relative; z-index: 1; }
+.rv-frames { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.rv-use-dim { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: rgb(14 20 18 / 42%); }
+.rv-use-bar { position: absolute; z-index: 3; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; max-width: calc(100% - 32px); padding: 5px 5px 5px 15px; border: 1px solid #d3dbd0; border-radius: 999px; background: #fdfdf8f5; box-shadow: 0 6px 22px #10201a33; font: 550 13px/1.3 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #2f4238; }
+.rv-use-bar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-use-done { flex: none; min-height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: #23534d; color: #fff; font: 600 13px/1 Inter, system-ui, sans-serif; cursor: pointer; }
+.rv-use-done:hover { background: #1b443f; }
+.rv-use-done:focus-visible { outline: 2px solid #12695c; outline-offset: 2px; }

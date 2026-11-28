@@ -8,6 +8,15 @@ import { poseFromRest, type JointValue, type Trs } from "../../shared/pose.ts";
 import type { RoomInstance, RoomLighting, RoomRelease } from "../../shared/room.ts";
 
 export interface RoomAsset { source: THREE.Group; manifest: Manifest; nodes: KNode[] }
+/** What a screen sheet draws: its built-in picture, a depth-correct hole for the live page under the canvas, or a
+ *  status plate (the sheet's own material with the plate as its glowing picture, so the screen glow and lamps apply). */
+export type ScreenLook = "builtin" | "hole" | { plate: THREE.Texture };
+/** One hole material for every live screen: colour 0, alpha 0, written without blending, with depth (Appendix D). */
+const HOLE = new THREE.MeshBasicMaterial({ color: 0, opacity: 0, transparent: false, blending: THREE.NoBlending, depthTest: true, depthWrite: true });
+HOLE.name = "live-hole";
+/** The material a mesh had before live content changed it (selection, plan colours and display modes read this). */
+const own = (mesh: THREE.Mesh) => (mesh.userData.liveOriginal ?? mesh.material) as THREE.Material | THREE.Material[];
+const ownList = (mesh: THREE.Mesh) => { const m = own(mesh); return Array.isArray(m) ? m : [m]; };
 export interface PlanPart { id: string; path: string; fill: string; top: number }
 
 export async function loadRoomAsset(release: RoomRelease): Promise<RoomAsset> {
@@ -176,7 +185,7 @@ export class PlacedAsset {
       const cached=this.projections.get(mesh);
       if (cached?.matrix.equals(mat)) return cached.part;
       const projected = planProjection(mesh,mat);
-      const source = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
+      const source = ownList(mesh)[0] as THREE.MeshStandardMaterial;
       const color = source.color?.clone();
       if (source.userData.roomBaseColour!==undefined) color?.setHex(source.userData.roomBaseColour);
       color?.convertLinearToSRGB();
@@ -211,7 +220,7 @@ export class PlacedAsset {
       const member=mesh.userData.roomMember;
       mesh.visible=this.partVisible(member,hidden);
       const colour=this.displayColour(member,mode);
-      for(const mat of Array.isArray(mesh.material)?mesh.material:[mesh.material]) if(mat instanceof THREE.MeshStandardMaterial) {
+      for(const mat of [...ownList(mesh),mesh.userData.livePlate as THREE.Material|undefined]) if(mat instanceof THREE.MeshStandardMaterial) {
         const neutral=mat.userData.roomBaseColour??=mat.color.getHex();
         if(colour)mat.color.setStyle(colour);else mat.color.setHex(neutral);
       }
@@ -222,7 +231,7 @@ export class PlacedAsset {
     for (const mesh of this.parts) {
       let node: THREE.Object3D | null = mesh;
       while (node && node !== target) node = node.parent;
-      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      for (const m of [...ownList(mesh), mesh.userData.livePlate as THREE.Material | undefined]) {
         if (m instanceof THREE.MeshStandardMaterial) {
           const original = m.userData.roomBaseEmissive ??= m.emissive.getHex();
           m.emissive.setHex(node && target ? 0x176b58 : original);
@@ -244,14 +253,49 @@ export class PlacedAsset {
     }
     for (const m of this.lampGlow) m.emissive.copy(on ? (tint ?? m.userData.lampEmissive) : new THREE.Color(0));
     const screen = l.screens.on ? l.screens.intensity : 0;
-    for (const m of this.screenGlow) m.emissiveIntensity = m.userData.glow * screen;
+    for (const m of this.screenGlow) {
+      m.emissiveIntensity = m.userData.glow * screen;
+      if (m.userData.livePlate) (m.userData.livePlate as THREE.MeshStandardMaterial).emissiveIntensity = m.emissiveIntensity;
+    }
+    this.screenLevel = screen;
     for (const light of this.screenLights) { light.visible = shown && screen > 0; light.intensity = SCREEN_NITS * screen; }
+  }
+
+  /** The screens' glow level last applied (0 when the scene's screens are off). */
+  screenLevel = 1;
+  /** The lit sheet of an S_ member: its mesh with a screen picture, else its first mesh. */
+  screenMesh(member: string): THREE.Mesh | null {
+    const meshes = this.parts.filter(m => m.userData.roomMember === member);
+    return meshes.find(m => ownList(m).some(x => x instanceof THREE.MeshStandardMaterial && x.emissiveMap)) ?? meshes[0] ?? null;
+  }
+  /** Draw an S_ member's sheet as its built-in picture, a hole or a plate. */
+  setScreenLook(member: string, look: ScreenLook) {
+    const mesh = this.screenMesh(member), original = mesh && own(mesh);
+    if (!mesh || !original || Array.isArray(original)) return;
+    mesh.userData.liveOriginal = original;
+    if (look === "builtin") { mesh.material = original; return; }
+    if (look === "hole") { mesh.material = HOLE; return; }
+    let plate = mesh.userData.livePlate as THREE.MeshStandardMaterial | undefined;
+    if (!plate) {
+      if (!(original instanceof THREE.MeshStandardMaterial)) return;
+      plate = original.clone(); plate.name = original.name + "-plate";
+      plate.userData = { ...original.userData };
+      mesh.userData.livePlate = plate; original.userData.livePlate = plate;
+    }
+    if (original instanceof THREE.MeshStandardMaterial) {
+      plate.emissiveIntensity = original.emissiveIntensity; plate.color.copy(original.color); plate.emissive.copy(original.emissive);
+    }
+    if (plate.emissiveMap !== look.plate) { plate.emissiveMap = look.plate; plate.needsUpdate = true; }
+    mesh.material = plate;
   }
 
   dispose() {
     this.holder.removeFromParent();
     for (const l of this.lamps) if (l instanceof THREE.SpotLight) l.shadow.dispose();
-    for (const mesh of this.parts) for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) m.dispose();
+    for (const mesh of this.parts) {
+      for (const m of ownList(mesh)) m.dispose();
+      (mesh.userData.livePlate as THREE.Material | undefined)?.dispose();
+    }
   }
 }
 

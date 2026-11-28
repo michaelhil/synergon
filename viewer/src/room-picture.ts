@@ -45,8 +45,51 @@ async function drawPlan(ctx: CanvasRenderingContext2D, svg: SVGSVGElement, w: nu
     URL.revokeObjectURL(url);
   }
 }
-export async function roomPicture(stage: HTMLElement, mode: "3d" | "plan"): Promise<Blob> {
-  const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+/** Live screens on the picture: their pages are other sites' frames, which a canvas cannot read. */
+export interface LiveCapture {
+  /** Swap every live screen to a labelled plate and draw at once; returns how to swap back (same task). */
+  plates(): () => void;
+}
+export const LIVE_NOTE = "Live screens are shown as labels. Use your system's screenshot to include them.";
+const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+/** The stage as this tab shows it, live screens included, from one frame of a capture of this tab (Chrome and Edge
+ *  ask once to "share this tab"). Null when the browser cannot or the person declines. */
+async function tabPicture(stage: HTMLElement): Promise<Blob | null> {
+  const media = navigator.mediaDevices;
+  if (!media?.getDisplayMedia) return null;
+  let stream: MediaStream;
+  try {
+    stream = await media.getDisplayMedia({ video: { displaySurface: "browser" }, audio: false, preferCurrentTab: true,
+      selfBrowserSurface: "include" } as DisplayMediaStreamOptions);
+  } catch { return null; }
+  try {
+    const track = stream.getVideoTracks()[0];
+    if (!track || track.getSettings().displaySurface !== "browser") return null;
+    const video = document.createElement("video");
+    video.muted = true; video.playsInline = true; video.srcObject = stream;
+    await video.play();
+    for (let n = 0; n < 40 && !video.videoWidth; n++) await frame();
+    await frame(); await frame();
+    const vw = video.videoWidth, vh = video.videoHeight;
+    // the capture must be this tab: same shape as the window
+    if (!vw || !vh || Math.abs(vw / vh - innerWidth / innerHeight) > 0.03) return null;
+    const k = vw / innerWidth, r = stage.getBoundingClientRect();
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(r.width * k)); canvas.height = Math.max(1, Math.round(r.height * k));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, r.x * k, r.y * k, r.width * k, r.height * k, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+  } catch { return null; }
+  finally { for (const t of stream.getTracks()) t.stop(); }
+}
+
+export async function roomPicture(stage: HTMLElement, mode: "3d" | "plan", live?: LiveCapture): Promise<Blob & { note?: string }> {
+  if (live && mode === "3d") {
+    const shot = await tabPicture(stage);
+    if (shot) return shot;
+  }
   await frame();
   await frame();
   const view = stage.getBoundingClientRect(),
@@ -66,7 +109,9 @@ export async function roomPicture(stage: HTMLElement, mode: "3d" | "plan"): Prom
   else {
     const gl = stage.querySelector("canvas");
     if (!gl) throw new Error("The 3D view is still opening.");
-    ctx.drawImage(gl, 0, 0, w, h);
+    // never a transparent hole: live screens become labelled plates for this one drawing
+    const restore = live?.plates();
+    try { ctx.drawImage(gl, 0, 0, w, h); } finally { restore?.(); }
     for (const tag of stage.querySelectorAll<HTMLElement>(".rv-orbit-tag")) {
       const r = tag.getBoundingClientRect();
       if (!r.width || !r.height) continue;
@@ -81,7 +126,8 @@ export async function roomPicture(stage: HTMLElement, mode: "3d" | "plan"): Prom
       ctx.fillText(tag.textContent ?? "", x + 5, y + r.height / 2, r.width - 7);
     }
   }
+  const note = live && mode === "3d" ? LIVE_NOTE : undefined;
   return new Promise((resolve, reject) =>
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Picture export failed."))), "image/png"),
+    canvas.toBlob((blob) => (blob ? resolve(Object.assign(blob, note ? { note } : {})) : reject(new Error("Picture export failed."))), "image/png"),
   );
 }

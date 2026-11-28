@@ -56,7 +56,7 @@ export class RoomOrbit {
   private readonly shadow = new THREE.DirectionalLight(0xffffff, 2.3);
   private readonly sky = new THREE.HemisphereLight(0xebf1f3,0x9da697,1.12);
   private lighting = "day";
-  private readonly environment: THREE.WebGLRenderTarget;
+  private environment: THREE.WebGLRenderTarget;
   private readonly tags = document.createElement("div");
   private readonly pointer = new THREE.Vector2();
   private readonly ray = new THREE.Raycaster();
@@ -72,23 +72,59 @@ export class RoomOrbit {
   private visible = true;
   private down?: [number,number];
   private grab?: {pointer:number;x:number;y:number;moved:boolean;plan:NonNullable<ReturnType<typeof roomDirectGrab>>};
+  /** Live screen content: called at the end of every render with the camera and the renderer's own integer size. */
+  afterRender?: (camera: THREE.Camera, width: number, height: number) => void;
+  /** Live screen content: sees every canvas pointer, wheel and click event first (capture phase, registered before
+   *  any other listener); returns true to swallow it. */
+  pointerGuard?: (e: Event) => boolean;
+  /** Called after the graphics context came back and the scene was rebuilt. */
+  onContextRestored?: () => void;
+  private using = false;
+  private clearColour = 0xeeeee8;
+  private lost = false;
+  private glide = 0;
 
   constructor(private host: HTMLElement, private callbacks: RoomViewCallbacks) {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-    this.renderer.setClearColor(0xeeeee8);
+    this.renderer.setClearColor(this.clearColour);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = .87;
     this.renderer.domElement.setAttribute("aria-label","Orbiting 3D room layout");
+    // focus returns here after a live screen was used (room-frames.ts)
+    this.renderer.domElement.tabIndex = -1;
+    for (const type of ["pointerdown","pointermove","pointerup","click","dblclick","wheel","contextmenu"]) {
+      this.renderer.domElement.addEventListener(type, e => {
+        if (this.pointerGuard?.(e)) { e.preventDefault(); e.stopImmediatePropagation(); }
+      }, { capture: true, passive: false });
+    }
     this.tags.className = "rv-orbit-tags";
     host.append(this.renderer.domElement,this.tags);
     this.scene.add(this.room,this.furniture,this.overlay,this.sky,this.shadow,this.shadow.target);
-    const pmrem = new THREE.PMREMGenerator(this.renderer), studio = new RoomEnvironment();
-    this.environment = pmrem.fromScene(studio,.04);
-    this.scene.environment = this.environment.texture;
+    this.environment = this.buildEnvironment();
     this.scene.environmentIntensity = .62;
-    studio.dispose(); pmrem.dispose();
+    // A lost graphics context (a GPU reset, or pages with maps running their own WebGL) comes back with the
+    // environment, shadows and textures rebuilt instead of a blank view.
+    this.renderer.domElement.addEventListener("webglcontextlost", e => {
+      e.preventDefault(); this.lost = true; cancelAnimationFrame(this.frame); this.frame = 0;
+    });
+    this.renderer.domElement.addEventListener("webglcontextrestored", () => {
+      this.lost = false;
+      // the renderer's own state starts again: an opaque background, then the environment
+      this.renderer.setClearColor(this.clearColour, 1);
+      this.environment.dispose(); this.environment = this.buildEnvironment();
+      this.renderer.shadowMap.needsUpdate = true;
+      this.scene.traverse(o => {
+        const materials = o instanceof THREE.Mesh || o instanceof THREE.Line ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+        for (const m of materials) {
+          for (const value of Object.values(m)) if (value instanceof THREE.Texture) value.needsUpdate = true;
+          m.needsUpdate = true;
+        }
+      });
+      this.onContextRestored?.();
+      this.invalidate();
+    });
     this.shadow.castShadow = true;
     this.shadow.shadow.mapSize.set(2048,2048);
     this.shadow.shadow.bias = -.00018;
@@ -104,7 +140,7 @@ export class RoomOrbit {
     this.renderer.domElement.addEventListener("pointerdown", e => { if (e.isPrimary && e.button === 0) this.down = [e.clientX,e.clientY]; });
     const canvas=this.renderer.domElement;
     canvas.addEventListener("pointerdown",e=>{
-      if (!this.callbacks.onAdjust || !this.drawing?.member || this.eyeActive || this.grab || e.button!==0 ||
+      if (!this.callbacks.onAdjust || !this.drawing?.member || this.eyeActive || this.using || this.grab || e.button!==0 ||
           !e.isPrimary || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
       const hit=this.hit(e);
       const plan=hit && roomDirectGrab(this.drawing,hit,this.camera,this.width,this.height);
@@ -123,7 +159,7 @@ export class RoomOrbit {
       this.invalidate();
     });
     canvas.addEventListener("pointerdown",e=>{
-      if(!this.eyeActive || e.button!==0)return;
+      if(!this.eyeActive || this.using || e.button!==0)return;
       this.eyeDrag={id:e.pointerId,x:e.clientX,y:e.clientY,yaw:this.eyeLook.yaw,pitch:this.eyeLook.pitch};canvas.setPointerCapture(e.pointerId);
     });
     canvas.addEventListener("pointermove",e=>{
@@ -155,6 +191,85 @@ export class RoomOrbit {
     });
   }
 
+  private buildEnvironment() {
+    const pmrem = new THREE.PMREMGenerator(this.renderer), studio = new RoomEnvironment();
+    const target = pmrem.fromScene(studio,.04);
+    this.scene.environment = target.texture;
+    studio.dispose(); pmrem.dispose();
+    return target;
+  }
+  /** The canvas the view draws into. */
+  get canvas() { return this.renderer.domElement; }
+  /** The camera of the current view (the room's orbit camera, or the operator's eye). */
+  currentCamera(): THREE.Camera { return this.eyeActive ? this.eyeCamera : this.camera; }
+  inEye() { return this.eyeActive; }
+  /** The renderer's own size in CSS px (frames are placed in this space, never from getBoundingClientRect). */
+  size(): [number, number] { return [this.width, this.height]; }
+  /** The first of `objects` under a viewport point (client px), or null. */
+  pick(x: number, y: number, objects: THREE.Object3D[]) {
+    if (!objects.length) return null;
+    const bounds=this.renderer.domElement.getBoundingClientRect();
+    this.pointer.set((x-bounds.left)/bounds.width*2-1,1-(y-bounds.top)/bounds.height*2);
+    this.ray.setFromCamera(this.pointer,this.currentCamera());
+    return this.ray.intersectObjects(objects,false)[0] ?? null;
+  }
+  /** The nearest visible mesh of the room or its objects under a viewport point. */
+  pickAny(x: number, y: number) {
+    return this.hit({clientX:x,clientY:y} as PointerEvent) ?? null;
+  }
+  /** Draw now (a picture is taken from the canvas in the same task). */
+  renderNow() {
+    if (this.lost || !this.drawing) return;
+    cancelAnimationFrame(this.frame); this.frame = 0;
+    this.draw();
+  }
+  /** While a live screen is used: no orbit, no direct grab, no eye drag. */
+  setUse(on: boolean) {
+    if (on) this.finishGrab(false);
+    this.using = on; this.eyeDrag = undefined;
+    this.controls.enabled = !on && !this.eyeActive;
+  }
+  /** Turn the room camera, within `ms`, to look square at a screen: from `normal` onto `centre`, the sheet
+   *  (`size`, metres) filling `fraction` of the stage. Things more than `clear` metres in front of the sheet are not
+   *  drawn meanwhile, so nothing stands between the eye and the screen. Returns how to go back. */
+  faceSheet(centre: THREE.Vector3, normal: THREE.Vector3, size: [number, number], fraction: number, ms: number, clear: number) {
+    const before = { ...this.cameraState(), near: this.camera.near, far: this.camera.far };
+    const distance = Math.max(4, clear * 2), to = centre.clone().addScaledVector(normal.clone().normalize(), distance);
+    const width = this.camera.right - this.camera.left, height = this.camera.top - this.camera.bottom;
+    const zoom = Math.max(this.controls.minZoom, Math.min(fraction * width / size[0], fraction * height / size[1]));
+    this.animate(to, centre, zoom, ms, () => { this.camera.near = distance - clear; this.camera.far = distance + 200; });
+    return (glideMs = ms) => {
+      this.animate(new THREE.Vector3().fromArray(before.position), new THREE.Vector3().fromArray(before.target), before.zoom, glideMs, () => {
+        this.camera.near = before.near; this.camera.far = before.far;
+      }, () => this.restoreCamera(before));
+    };
+  }
+  private animate(position: THREE.Vector3, target: THREE.Vector3, zoom: number, ms: number, atEnd: () => void, finish?: () => void) {
+    cancelAnimationFrame(this.glide);
+    const p0 = this.camera.position.clone(), t0 = this.controls.target.clone(), z0 = this.camera.zoom, start = performance.now();
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const step = () => {
+      const k = reduce || ms <= 0 ? 1 : Math.min(1, (performance.now() - start) / ms), e = k * k * (3 - 2 * k);
+      this.camera.position.lerpVectors(p0, position, e); this.controls.target.lerpVectors(t0, target, e);
+      this.camera.zoom = z0 + (zoom - z0) * e;
+      this.camera.up.set(0, 1, 0); this.camera.lookAt(this.controls.target);
+      if (k >= 1) { atEnd(); finish?.(); }
+      this.camera.updateProjectionMatrix(); this.camera.updateMatrixWorld();
+      this.invalidate();
+      if (k < 1) this.glide = requestAnimationFrame(step); else this.glide = 0;
+    };
+    step();
+  }
+  /** Test hook (local installations): lose the graphics context and get it back. */
+  loseContext(): Promise<void> {
+    const ext = this.renderer.getContext().getExtension("WEBGL_lose_context");
+    if (!ext) return Promise.reject(new Error("WEBGL_lose_context is not available"));
+    return new Promise(resolve => {
+      this.renderer.domElement.addEventListener("webglcontextrestored", () => requestAnimationFrame(() => requestAnimationFrame(() => resolve())), { once: true });
+      ext.loseContext(); setTimeout(() => ext.restoreContext(), 120);
+    });
+  }
+
   private hit(e:PointerEvent) {
     this.furniture.updateWorldMatrix(true,true);
     const bounds=this.renderer.domElement.getBoundingClientRect();
@@ -172,7 +287,7 @@ export class RoomOrbit {
     if (!commit) this.down=undefined;
     const {plan}=grab,values=commit && grab.moved ? plan.changes() : {};
     plan.restore(scene);
-    this.controls.enabled=!this.eyeActive;
+    this.controls.enabled=!this.eyeActive && !this.using;
     this.renderer.domElement.style.cursor="";
     if (this.renderer.domElement.hasPointerCapture(grab.pointer)) this.renderer.domElement.releasePointerCapture(grab.pointer);
     this.invalidate();
@@ -200,7 +315,7 @@ export class RoomOrbit {
       this.lighting = this.litShown ? "lamps" : "day";
       const dim = this.lighting === "lamps";
       this.sky.intensity = dim ? .07 : 1.12; this.shadow.intensity = dim ? .2 : 2.3; this.scene.environmentIntensity = dim ? .05 : .62;
-      this.renderer.setClearColor(dim ? 0x262b28 : 0xeeeee8);
+      this.clearColour = dim ? 0x262b28 : 0xeeeee8; this.renderer.setClearColor(this.clearColour);
       this.host.closest(".rv-stage")?.classList.toggle("rv-dim", dim);
       this.host.closest(".rm-drawing")?.classList.toggle("rm-drawing-dim", dim);
     }
@@ -239,7 +354,8 @@ export class RoomOrbit {
   resize(w: number,h: number) {
     if (w!==this.width || h!==this.height) this.finishGrab(false);
     this.width=w; this.height=h;
-    this.renderer.setSize(w,h,false);
+    // the canvas's CSS size is the renderer's own integer size, so live frames placed in it register with the picture
+    this.renderer.setSize(w,h,true);
     this.eyeCamera.aspect=w/h; this.eyeCamera.updateProjectionMatrix();
     this.frustum(); this.invalidate();
   }
@@ -288,7 +404,7 @@ export class RoomOrbit {
     this.eyeCamera.position.copy(p);this.eyeDirection.copy(target).sub(p).normalize();this.applyEyeLook();
     this.host.dataset.camera="operator";this.invalidate();
   }
-  leaveEye() { this.eyeActive=false;this.eyeDrag=undefined;this.controls.enabled=true;delete this.host.dataset.camera;this.invalidate(); }
+  leaveEye() { this.eyeActive=false;this.eyeDrag=undefined;this.controls.enabled=!this.using;delete this.host.dataset.camera;this.invalidate(); }
   fit(preset:CameraPreset="overview") {
     this.finishGrab(false);
     if (!this.drawing) return;
@@ -464,16 +580,23 @@ export class RoomOrbit {
     this.shadow.shadow.camera.updateProjectionMatrix();
   }
   invalidate = () => {
-    if (this.frame || !this.visible) return;
+    if (this.frame || !this.visible || this.lost) return;
     this.frame = requestAnimationFrame(() => {
       this.frame=0;
       if (!this.visible || !this.drawing) return;
+      this.draw();
+    });
+  };
+  private draw() {
+    {
+      if (!this.drawing) return;
       const camera=this.eyeActive?this.eyeCamera:this.camera;
       const {room:r,instances} = this.drawing.scene, cam=camera.position;
       for (const [side,g] of this.wallGroups) {
         g.visible = side === "south" ? cam.z < 0 : side === "north" ? cam.z > -r.depth : side === "west" ? cam.x > 0 : cam.x < r.width;
       }
       this.renderer.render(this.scene,camera);
+      this.afterRender?.(camera,this.width,this.height);
       const labels = document.createDocumentFragment();
       for (const i of instances) {
         const model = this.drawing.models.get(i.id);
@@ -487,11 +610,11 @@ export class RoomOrbit {
         tag.style.left=((v.x+1)*this.width/2)+"px"; tag.style.top=((1-v.y)*this.height/2)+"px"; labels.append(tag);
       }
       this.tags.replaceChildren(labels);
-    });
-  };
+    }
+  }
   dispose() {
     this.finishGrab(false);
-    this.visible=false; cancelAnimationFrame(this.frame);
+    this.visible=false; cancelAnimationFrame(this.frame); cancelAnimationFrame(this.glide);
     this.controls.dispose(); clearObjects(this.room); clearObjects(this.overlay);
     this.shadow.shadow.dispose(); this.environment.dispose(); this.renderer.dispose();
     this.renderer.domElement.remove(); this.tags.remove();

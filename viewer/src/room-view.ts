@@ -2,6 +2,7 @@
 import { disposeRoomAsset, loadRoomAsset, PlacedAsset, type RoomAsset } from "./room-assets-renderer.ts";
 import { RoomPlan, type Drawing, type Lighting, type RoomMeasurement, type RoomViewCallbacks } from "./room-plan-renderer.ts";
 import type { RoomOrbit } from "./room-orbit-renderer.ts";
+import { mountLiveContent } from "./room-frames.ts";
 import type { RoomAvatar } from "./room-person-renderer.ts";
 import type { CameraPreset, RoomViewLink } from "./room-camera-state.ts";
 import type { RoomInstance, RoomPoint, RoomRelease, RoomScene } from "../../shared/room.ts";
@@ -9,7 +10,7 @@ import type { JointValue } from "../../shared/pose.ts";
 
 export type { RoomMeasurement, RoomPlacement, RoomViewCallbacks } from "./room-plan-renderer.ts";
 export type RoomViewMode = "plan" | "3d";
-export function mountRoomView(host: HTMLElement, callbacks: RoomViewCallbacks) {
+export function mountRoomView(host: HTMLElement, callbacks: RoomViewCallbacks, options: { api?: string } = {}) {
   const stage = document.createElement("div"); stage.className="rv-stage rv-no-labels";
   const orbitHost=document.createElement("div"); orbitHost.className="rv-orbit"; orbitHost.hidden=true;
   const status=document.createElement("div"); status.className="rv-status"; status.setAttribute("role","status"); status.hidden=true;
@@ -37,6 +38,9 @@ export function mountRoomView(host: HTMLElement, callbacks: RoomViewCallbacks) {
   stage.append(orbitHost,status,progress);
   const assets=new Map<string,RoomAsset>(), fetching=new Set<string>(), failures=new Map<string,string>();
   const models=new Map<string,PlacedAsset>();
+  // live screen content: pages laid over the flat screens (room-frames.ts)
+  const live=mountLiveContent({stage,api:options.api,model:id=>models.get(id),mode:()=>mode,lighting:()=>lighting});
+  if (["127.0.0.1","localhost","[::1]"].includes(location.hostname)) (window as unknown as Record<string,unknown>).__synergonLive=live.debug;
   let posePreview:{instance:string;values:Record<string,JointValue>}|undefined;
   let poseFrame=0;
   let boundPreview=false;
@@ -68,7 +72,7 @@ export function mountRoomView(host: HTMLElement, callbacks: RoomViewCallbacks) {
   let grid=true, labels=false, eye=false, lighting:Lighting="day";
   let colours:"natural"|"parts"|"evidence"="natural";
   const cameraChanged=()=>stage.dispatchEvent(new Event("room-camera-change",{bubbles:true}));
-  const leaveEye=()=>{eye=false;orbit?.leaveEye();if(personKey && scene?.person)person?.show(true);cameraChanged();};
+  const leaveEye=()=>{live.viewChanged();eye=false;orbit?.leaveEye();if(personKey && scene?.person)person?.show(true);cameraChanged();};
   let focused:string|null=null, paintedScope:string|null=null, focusEpoch=0;
   let roomReturn:RoomViewLink|undefined;
   const shownInstances=()=>focused ? scene?.instances.filter(i=>i.id===focused)??[] : scene?.instances??[];
@@ -102,6 +106,7 @@ export function mountRoomView(host: HTMLElement, callbacks: RoomViewCallbacks) {
     for(const model of models.values())if(!focused || model.id===focused)model.applyDisplay(hiddenParts,colours);
     if (mode === "plan") plan.update(data);
     if (orbit && (mode==="3d" || focused!==paintedScope)) {orbit.update(data);paintedScope=focused;}
+    live.paint();
   }
 
   async function syncPerson() {
@@ -171,7 +176,7 @@ export function mountRoomView(host: HTMLElement, callbacks: RoomViewCallbacks) {
   async function switchView(next:RoomViewMode) {
     if (disposed) return;
     if(next==="plan")leaveEye();
-    mode=next; plan.cancel(); plan.svg.style.display=mode==="plan" ? "block" : "none";
+    mode=next; live.viewChanged(); plan.cancel(); plan.svg.style.display=mode==="plan" ? "block" : "none";
     stage.dataset.view=mode; orbitHost.hidden=mode!=="3d";
     orbit?.show(mode==="3d");
     if (next==="3d" && !orbit) {
@@ -181,6 +186,7 @@ export function mountRoomView(host: HTMLElement, callbacks: RoomViewCallbacks) {
           const {RoomOrbit}=await import("./room-orbit-renderer.ts");
           if (disposed) return;
           orbit=new RoomOrbit(orbitHost,{...callbacks,onBusy:setBusy});
+          live.attach(orbit);
           orbit.show(mode==="3d");orbit.showGrid(grid);size();
         } catch(e) {
           if (!disposed) { mode="plan";stage.dataset.view=mode;orbitHost.hidden=true;plan.svg.style.display="block";report(e); }
@@ -238,6 +244,7 @@ export function mountRoomView(host: HTMLElement, callbacks: RoomViewCallbacks) {
     setScene(next:RoomScene,catalog:RoomRelease[]) {
       if (disposed) return;
       scene=next; releases=catalog;
+      live.setScene(next);
       if(focused && !scene.instances.some(i=>i.id===focused))void focusAsset(null);
       if (selected && !scene.instances.some(i=>i.id===selected)) { selected=null; member=null; measurement=null; }
       assetsChanged();
@@ -252,7 +259,7 @@ export function mountRoomView(host: HTMLElement, callbacks: RoomViewCallbacks) {
     preset(preset:CameraPreset) {leaveEye();orbit?.fit(preset);},
     eye(from:RoomPoint,to:RoomPoint) {
       if(!orbit || mode!=="3d") throw new Error("Open the 3D view to use the operator’s eye.");
-      orbit.eye(from,to);eye=true;person?.hide();cameraChanged();
+      live.viewChanged();orbit.eye(from,to);eye=true;person?.hide();cameraChanged();
     },
     leaveEye,
     cameraState,
@@ -281,10 +288,15 @@ export function mountRoomView(host: HTMLElement, callbacks: RoomViewCallbacks) {
     },
     async picture(){if(shownInstances().some(i=>failures.has(i.release)))throw new Error("Resolve the missing asset before saving its picture.");
       if(shownInstances().some(i=>!models.has(i.id)) || personWaiting)throw new Error("The scene is still loading. Try again after its assets appear.");
-      const {roomPicture}=await import("./room-picture.ts");return roomPicture(stage,mode);},
+      const withLive=mode==="3d" && live.liveVisible();
+      const {roomPicture}=await import("./room-picture.ts");return roomPicture(stage,mode,withLive?{plates:()=>live.plates()}:undefined);},
+    /** Live screen content (room-frames.ts): states, Use and the Settings switch for the configurator. */
+    content:live.api,
+    /** The viewer token from the scene's live stream (for the reports of what this viewer shows). */
+    setViewer(token:string){live.setViewer(token);},
     dispose() {
       if (disposed) return;
-      disposed=true;cancelAnimationFrame(poseFrame); personEpoch++; observer.disconnect(); plan.cancel(); person?.dispose();
+      disposed=true;cancelAnimationFrame(poseFrame); personEpoch++; observer.disconnect(); plan.cancel(); person?.dispose(); live.dispose();
       for (const model of models.values()) model.dispose();
       orbit?.dispose();
       for (const asset of assets.values()) disposeRoomAsset(asset);
