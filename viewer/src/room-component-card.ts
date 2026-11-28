@@ -33,7 +33,8 @@ export function componentPanel(title:string,item:RoomInstance,part:string,close:
 
 export function componentCard({item,release,part,edit,apply,beginGesture,close,pop,dock,placement,screen}:CardOptions) {
   const member=release.members.find(m=>m.id===part);
-  const card=componentPanel((member?.label || item.label).replace(/:\s*lit area$/i,""),item,part,close,pop,dock);
+  const title=(member?.label || item.label).replace(/:\s*lit area$/i,"");
+  const card=componentPanel(title==="Active screen" ? "Screen" : title,item,part,close,pop,dock);
   const joints = release.joints.filter(j=>member?.controls?.includes(j.id) && (!j.locked || j.assumed));
   if (screen) card.append(screen);
   if (!joints.length) {

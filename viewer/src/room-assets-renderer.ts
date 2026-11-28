@@ -220,7 +220,7 @@ export class PlacedAsset {
       const member=mesh.userData.roomMember;
       mesh.visible=this.partVisible(member,hidden);
       const colour=this.displayColour(member,mode);
-      for(const mat of [...ownList(mesh),mesh.userData.livePlate as THREE.Material|undefined]) if(mat instanceof THREE.MeshStandardMaterial) {
+      for(const mat of ownList(mesh)) if(mat instanceof THREE.MeshStandardMaterial) {
         const neutral=mat.userData.roomBaseColour??=mat.color.getHex();
         if(colour)mat.color.setStyle(colour);else mat.color.setHex(neutral);
       }
@@ -231,7 +231,7 @@ export class PlacedAsset {
     for (const mesh of this.parts) {
       let node: THREE.Object3D | null = mesh;
       while (node && node !== target) node = node.parent;
-      for (const m of [...ownList(mesh), mesh.userData.livePlate as THREE.Material | undefined]) {
+      for (const m of ownList(mesh)) {
         if (m instanceof THREE.MeshStandardMaterial) {
           const original = m.userData.roomBaseEmissive ??= m.emissive.getHex();
           m.emissive.setHex(node && target ? 0x176b58 : original);
@@ -282,9 +282,9 @@ export class PlacedAsset {
       plate.userData = { ...original.userData };
       mesh.userData.livePlate = plate; original.userData.livePlate = plate;
     }
-    if (original instanceof THREE.MeshStandardMaterial) {
-      plate.emissiveIntensity = original.emissiveIntensity; plate.color.copy(original.color); plate.emissive.copy(original.emissive);
-    }
+    // neutral: the plate's own light text on its dark ground, never tinted by the screen's colour or a selection
+    plate.color.setRGB(0, 0, 0); plate.emissive.setRGB(1, 1, 1);
+    if (original instanceof THREE.MeshStandardMaterial) plate.emissiveIntensity = original.emissiveIntensity;
     if (plate.emissiveMap !== look.plate) { plate.emissiveMap = look.plate; plate.needsUpdate = true; }
     mesh.material = plate;
   }

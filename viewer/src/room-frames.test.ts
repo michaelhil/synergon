@@ -5,7 +5,7 @@ import { frameAddress, type AddressPolicy, type LiveApp, type SceneContent } fro
 import { runName } from "../../shared/run-name.ts";
 import { homography, mapPoint } from "./room-frames.ts";
 import {
-  acceptMessage, cleanText, MessageGate, readMessage, reportBody, ReportSchedule, resolveShows, ScreenStatus,
+  acceptMessage, cleanText, MessageGate, readableDetail, readMessage, reportBody, ReportSchedule, resolveShows, ScreenStatus, siteLabel,
   type ContentListResult,
 } from "./room-content.ts";
 
@@ -188,5 +188,20 @@ describe("reports", () => {
     s.update({ a: { state: "ended" } });
     expect(sent.length).toBe(2);
     s.stop();
+  });
+});
+
+describe("words on plates and cards", () => {
+  test("an app's line shows only when it reads as a sentence", () => {
+    expect(readableDetail("All shared screens are in use. Try again in a minute.")).toBe("All shared screens are in use. Try again in a minute.");
+    for (const raw of ["AJAXError: Service Unavailable (503): /map/tiles/current/9/272/150.mvt", "TypeError: x is undefined",
+      "Failed to fetch https://leitbild.app/api", "see C:\\logs\\run.txt", "{\"code\":42}", "run_ext not found", "ok", "server down 502"])
+      expect(readableDetail(raw)).toBeUndefined();
+  });
+  test("sites by their names", () => {
+    expect(siteLabel("https://www.youtube-nocookie.com/embed/abcdefghijk")).toBe("YouTube video");
+    expect(siteLabel("https://player.vimeo.com/video/1")).toBe("Vimeo video");
+    expect(siteLabel("https://www.example.org/x")).toBe("example.org");
+    expect(siteLabel("http://localhost:4100/page")).toBe("localhost:4100");
   });
 });

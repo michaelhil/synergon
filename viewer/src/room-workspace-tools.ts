@@ -327,6 +327,7 @@ export function mountRoomWorkspaceTools(o: ToolsOptions) {
       field("Colours", colors),
       check("Object labels", d.labels, (on) => view.setDisplay({ ...view.display(), labels: on })),
       check("Live screen content", view.content.enabled(), (on) => view.content.setEnabled(on)),
+      h("p", "rw-hint", "In this browser only. Off shows the built-in pictures."),
     );
     if (!view.focusedAsset())
       body.append(check("Floor grid", d.grid, (on) => view.setDisplay({ ...view.display(), grid: on })));
@@ -371,7 +372,7 @@ export function mountRoomWorkspaceTools(o: ToolsOptions) {
         h(
           "p",
           null,
-          "Drag an object to place it in plan. Drag empty space to pan. In 3D, click an adjustable part, then drag it to move its joints. Drag the background to orbit and scroll to zoom. Shift-click opens another component card. Ctrl/Cmd + Z undoes a layout edit.",
+          "Drag an object to place it in plan. Drag empty space to pan. In 3D, click an adjustable part, then drag it to move its joints. Drag the background to orbit and scroll to zoom. Shift-click opens another component card. Ctrl/Cmd + Z undoes a layout edit. Double-click a live screen to use it; click outside it or press Done to leave.",
         ),
       ),
     );

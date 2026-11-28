@@ -42,6 +42,26 @@ export interface ResolvedShow {
 
 const hostOf = (s: string) => { try { return new URL(s).host; } catch { return undefined; } };
 
+/** A page's name for people: "YouTube video", "Vimeo video", or its host without "www.". */
+export function siteLabel(url: string): string {
+  let host: string;
+  try { host = new URL(url).host; } catch { return url; }
+  if (/(^|\.)youtube(-nocookie)?\.com$|^youtu\.be$/.test(host)) return "YouTube video";
+  if (/(^|\.)vimeo\.com$/.test(host)) return "Vimeo video";
+  return host.replace(/^www\./, "");
+}
+
+/**
+ * An app's own line, only if it reads as a sentence for people: no "error", status codes, paths, addresses, file
+ * names or code-like characters. Otherwise undefined (Synergon's own sentence stands alone).
+ */
+export function readableDetail(text: string | undefined): string | undefined {
+  const t = cleanText(text);
+  if (!t || t.length < 8 || !/\s/.test(t) || !/^[\p{Lu}\p{N}]/u.test(t)) return undefined;
+  if (/error|exception|fail(ed|ure)|undefined|null\b|stack|\b[1-5]\d\d\b|https?:|www\.|\/\S|\S\/|\\|[{}<>[\]=_|#@$%^*~`;]|\w\.\w{2,4}\b|\w::\w|\(\d/i.test(t)) return undefined;
+  return t;
+}
+
 /** Every show on an offered screen, with its address checked again here (§3.3: the viewer checks before every load). */
 export function resolveShows(content: SceneContent | undefined, sceneId: string, list: ContentListResult | null,
   self: string, typed: readonly string[]): ResolvedShow[] {
@@ -73,7 +93,7 @@ export function resolveShows(content: SceneContent | undefined, sceneId: string,
           : { ...head, refused: address.why, host: hostOf(page.href) });
       } else if (source.kind === "page") {
         const url = typeof source.url === "string" ? source.url : "";
-        const label = typeof source.label === "string" ? source.label : hostOf(url) ?? show.source;
+        const label = url ? siteLabel(url) : typeof source.label === "string" ? source.label : show.source;
         const address = frameAddress(url, { ...policy, typed: typed.includes(url) });
         out.push(address.ok ? { ...base, kind: "page", label, href: address.href, origin: address.origin, host: hostOf(address.href) }
           : { ...base, kind: "page", label, refused: address.why, host: hostOf(url) });

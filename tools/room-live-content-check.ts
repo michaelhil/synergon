@@ -19,6 +19,7 @@ const views = ["one", "two", "three", "four", "five", "map"].map(id => ({ id, la
 const apps = [{ id: "fake", label: "Fake", origin: provider.url.origin, items: [
   { id: "demo", label: "Demo item", page: "/app?run={run}&item={item}&view={view}", views },
   { id: "silent", label: "Silent item", page: "/silent?run={run}&item={item}&view={view}", views: [{ id: "one", label: "One" }] },
+  { id: "broken", label: "Broken item", page: "/refused?run={run}&item={item}&view={view}", views: [{ id: "map", label: "Map" }] },
 ] }];
 // serveRoom's `apps` option belongs to the server package; older servers ignore it
 const service = await (serveRoom as (o: object) => ReturnType<typeof serveRoom>)({ port: 0, dataDir: temp, apps });
@@ -134,17 +135,23 @@ try {
   const undoBody = JSON.parse((await A.evaluate(`__sent.find(b => b.includes('"undo"')) || 'null'`)) as string) as { args?: { version?: unknown } } | null;
   await A.evaluate(`(() => { const s = [...document.querySelectorAll('summary')].find(s => s.textContent.startsWith('Screens')); s.parentElement.open = true;
     const pick = document.querySelector('select[aria-label="Screens"]'); pick.value = 'item:fake/demo'; pick.dispatchEvent(new Event('change')); })()`);
-  const again = await until(A, `/on 5 screens/.test(document.querySelector('.rm-notice:not([hidden])')?.innerText || '')`, 6000);
+  const again = await until<string>(A, `(() => { const t = document.querySelector('.rm-notice:not([hidden])')?.innerText || ''; return /on 5 screens/.test(t) ? t : null; })()`, 6000);
+  // the desk faces away in this view: the notice says so and offers Look, which turns the view to the desk
+  await A.evaluate(`[...document.querySelectorAll('.rm-notice button')].find(b => b.textContent === 'Look').click()`);
+  const looked = await until(A, `document.querySelector('.rv-stage').dataset.focusedAsset === 'desk-a' && (() => { const d = window.__synergonLive(); return ${JSON.stringify(desk)}.some(k => d[k]?.displayed); })()`, 6000);
+  step(!!again && /face away/.test(again) && !!looked, "after a distribution out of sight the notice says the screens face away, and Look turns the view to them", (again ?? "").replace(/\s+/g, " "));
   const other = (await command("state", {})).result.scene.instances.find((i: { id: string }) => i.id === "station-b");
   await command("instances.move", { instance: "station-b", x: other.x + 0.01 });
   const hidden = await until(A, `document.querySelector('.rm-notice').hidden`, 3000);
   await until(A, `(() => { const d = window.__synergonLive(); return ${JSON.stringify(desk)}.every(k => d[k]?.state === 'showing'); })()`, 10_000);
   step(!!undone && typeof undoBody?.args?.version === "number" && !!again && !!hidden,
     "the notice's Undo undoes the announced edit by its version; a later edit hides the notice", JSON.stringify(undoBody));
-  // see the desk's screens
-  await A.evaluate(`document.querySelector('[aria-label="View scope"]').click()`);
-  await until(A, `document.querySelector('[aria-label="Focus on Operator desk"]')`);
-  await A.evaluate(`document.querySelector('[aria-label="Focus on Operator desk"]').click()`);
+  // see the desk's screens (Look focused the desk already)
+  if (!await A.evaluate(`document.querySelector('.rv-stage').dataset.focusedAsset === 'desk-a'`)) {
+    await A.evaluate(`document.querySelector('[aria-label="View scope"]').click()`);
+    await until(A, `document.querySelector('[aria-label="Focus on Operator desk"]')`);
+    await A.evaluate(`document.querySelector('[aria-label="Focus on Operator desk"]').click()`);
+  }
   await until(A, `(() => { const d = window.__synergonLive(); return ${JSON.stringify(desk)}.every(k => d[k]?.displayed); })()`, 8000);
   await sleep(400);
   await A.screenshot(join(temp, "desk.png"));
@@ -273,13 +280,14 @@ try {
   await A.evaluate(`document.querySelector('[aria-label="Return to whole scene"]')?.click()`);
   await until(A, `!document.querySelector('.rv-stage').dataset.focusedAsset`, 5000);
   await objectRow(A, "Operator desk");
-  const restart = `[...document.querySelectorAll('details')].find(d => d.querySelector('summary')?.textContent.startsWith('Screens'))?.querySelector('.rm-object-actions button')`;
+  const restart = `[...document.querySelectorAll('details')].find(d => d.querySelector('summary')?.textContent.startsWith('Screens'))?.querySelector('.rm-live-actions button')`;
   if (!await until(A, `!!${restart}`, 4000)) throw new Error("no Restart in Operator desk › Screens: " + await A.evaluate("document.querySelector('.rm-scroll').innerText.slice(0, 600)"));
   await A.evaluate(`${restart}.click()`);
   const restarted = await until<string>(A, `(() => { const r = window.__synergonLive()['${bigL}']?.run; return r && r !== ${JSON.stringify(runBefore)} ? r : null; })()`, 6000);
-  await A.evaluate(`document.querySelector('[title="Undo latest change"]').click()`);
+  const told = await until<string>(A, `(() => { const t = document.querySelector('.rm-notice:not([hidden])')?.innerText || ''; return /Restarted Demo item/.test(t) ? t : null; })()`, 4000);
+  await A.evaluate(`[...document.querySelectorAll('.rm-notice button')].find(b => b.textContent === 'Undo').click()`);
   const back = await until(A, `window.__synergonLive()['${bigL}']?.run === ${JSON.stringify(runBefore)}`, 6000);
-  step(!!restarted && !!back, "Restart: a new run on every screen; Undo: the old run again", `${runBefore} → ${restarted}`);
+  step(!!restarted && !!told && !!back, "Restart: a new run on every screen and a notice; its Undo: the old run again", `${runBefore} → ${restarted}; ${(told ?? "").replace(/\s+/g, " ")}`);
 
   // 8. a page from another origin waits for Show; after Show and a reload it loads at once; a silent app page is Not answering
   const wall = "wall-display/S_screen";
@@ -298,6 +306,20 @@ try {
   const silent = await until(A, `window.__synergonLive()['display-a/S_screen']?.state === 'not_answering'`, 8000);
   step(!!waits && /Content from localhost/.test(plate ?? "") && !!shown && !!atOnce && !!silent,
     "another site waits with Content from … and Show, then loads at once after a reload; a silent app page is Not answering", plate ?? "");
+  // a refused view: Synergon's own sentence (never the app's raw error text), Retry reloads that screen, Restart stays
+  await command("content.show", { instance: "station-b", screen: "S_ts_screen", item: "broken", app: "fake" });
+  await until(A, `window.__synergonLive()['station-b/S_ts_screen']?.state === 'refused'`, 6000);
+  await objectRow(A, "Station B");
+  await until(A, `document.querySelector('select[aria-label="Selected component"]')`);
+  await A.evaluate(`(() => { const pick = document.querySelector('select[aria-label="Selected component"]'); pick.value = 'S_ts_screen'; pick.dispatchEvent(new Event('change')); })()`);
+  const refusedLine = await until<string>(A, `(() => { const s = document.querySelector('.rm-component-card .rm-live-status'); return s && /could not start/.test(s.innerText) ? s.innerText : null; })()`, 4000);
+  const loads0 = (await debug(A))["station-b/S_ts_screen"]?.loads ?? 0;
+  await A.evaluate(`document.querySelector('.rv-frames iframe[data-key="station-b/S_ts_screen"]').dataset.mark = '1'`);
+  await A.evaluate(`[...document.querySelectorAll('.rm-component-card .rm-live-status button')].find(b => b.textContent === 'Retry').click()`);
+  const reloaded = await until(A, `(() => { const f = document.querySelector('.rv-frames iframe[data-key="station-b/S_ts_screen"]'); return f && !f.dataset.mark && window.__synergonLive()['station-b/S_ts_screen'].state === 'refused'; })()`, 6000);
+  const plainSentence = !!refusedLine && !/AJAX|Error|503|\/map/.test(refusedLine) && /Retry/.test(refusedLine) && /Restart/.test(refusedLine);
+  step(plainSentence && !!reloaded, "a refused view says \"This view could not start.\" with Retry (reloads the screen) and Restart; no raw app error", `${(refusedLine ?? "").replace(/\s+/g, " ")}; loads before ${loads0}`);
+  await command("content.clear", { instance: "station-b" });
 
   // 9. content.list: seen showing from both browsers with the app's run id
   const runNow = (await debug(B))[bigL]!.run;

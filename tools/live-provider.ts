@@ -6,6 +6,7 @@
 //                          lost capture and blur). Every input event is recorded.
 //   /page                  a plain page that never greets
 //   /silent                an app page that loads and never greets (must become "Not answering")
+//   /refused               an app page that greets and refuses with a raw technical line
 //   /slow                  never finishes loading within 25 s
 //   /refuse                sends X-Frame-Options: DENY
 //   GET /events            what the pages recorded (CORS *); DELETE /events clears
@@ -33,7 +34,7 @@ const PAGE = String.raw`<!doctype html><html lang="en"><head><meta charset="utf-
 <script>
 (() => {
   const q = new URLSearchParams(location.search), page = location.pathname, PROTOCOL = "live-surfaces/1";
-  const run = q.get("run") || "", view = q.get("view") || "", greet = page === "/app";
+  const run = q.get("run") || "", view = q.get("view") || "", greet = page === "/app" || page === "/refused";
   document.getElementById("title").textContent = (q.get("item") || "page") + " · " + (view || page.slice(1));
   const log = (type, extra) => { try { fetch("/event", { method: "POST", body: JSON.stringify({ page, view, type, t: Date.now(), ...extra }), keepalive: true }); } catch (e) {} };
   let parent = "";
@@ -46,6 +47,8 @@ const PAGE = String.raw`<!doctype html><html lang="en"><head><meta charset="utf-
       const m = e.data; log("message:" + m.type, { fps: m.fps, active: m.active, width: m.width, height: m.height });
       // like Leitbild: "live" is said only once the page has drawn, and a page told rate 0 does not draw
       if (m.type === "hello" || m.type === "rate") fps = typeof m.fps === "number" ? m.fps : fps;
+      // /refused: an app page whose view cannot start, with the kind of raw text a real app may send
+      if (page === "/refused" && m.type === "hello") { send({ type: "status", state: "refused", run: "run-ext-" + run, view, text: "AJAXError: Service Unavailable (503): /map/tiles/current/9/272/150.mvt" }); return; }
       const goLive = () => { if (live) return; if (fps > 0) { live = true; document.getElementById("state").textContent = "Live"; send({ type: "status", state: "live", run: "run-ext-" + run, view }); } else pending = true; };
       if (m.type === "hello" && !live && !started) { started = true; send({ type: "status", state: "starting", run: "run-ext-" + run, view }); setTimeout(goLive, 300); }
       else if (m.type === "hello" && live) send({ type: "status", state: "live", run: "run-ext-" + run, view });
@@ -107,7 +110,7 @@ export function startLiveProvider({ port = 0 }: { port?: number } = {}) {
         if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...cors, "Access-Control-Allow-Methods": "GET, DELETE" } });
         return Response.json({ events, frames: Object.fromEntries(latest) }, { headers: cors });
       }
-      if (path === "/app" || path === "/page" || path === "/silent") return html(path === "/silent" ? PAGE.replace('greet = page === "/app"', "greet = false") : PAGE);
+      if (path === "/app" || path === "/page" || path === "/silent" || path === "/refused") return html(path === "/silent" ? PAGE.replace('greet = page === "/app"', "greet = false") : PAGE);
       if (path === "/refuse") return html(PAGE, { "X-Frame-Options": "DENY" });
       if (path === "/slow") {
         let timer: ReturnType<typeof setTimeout>;

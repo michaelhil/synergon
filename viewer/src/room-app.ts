@@ -13,7 +13,7 @@ import { cctColour } from '../../shared/light-colour.ts';
 import { effectiveLighting, type RoomInstance, type RoomJoint, type RoomLighting, type RoomPoint, type RoomRef, type RoomRelease, type RoomScene } from '../../shared/room.ts';
 import {roomOperatorControls} from './room-operator-controls.ts';
 import { embeddable, frameAddress, type AppSource, type SceneContent } from '../../shared/room-content.ts';
-import { liveStorage, screenKey } from './room-content.ts';
+import { liveStorage, screenKey, siteLabel } from './room-content.ts';
 
 type PanelTab = 'layout' | 'measure' | 'assessment';
 type Args = Record<string, unknown>;
@@ -25,7 +25,7 @@ const shortRelease = (release: RoomRelease) => release.label + ' · v' + release
 const distanceFormat = new Intl.NumberFormat('en', { minimumFractionDigits: 2, maximumFractionDigits: 3, useGrouping: false });
 const metres = (n: number) => distanceFormat.format(n) + ' m';
 /** Menu labels drop the modeller's ": lit area" suffix. */
-const plainLabel = (label: string) => label.replace(/:\s*lit area$/i, '');
+const plainLabel = (label: string) => { const l = label.replace(/:\s*lit area$/i, ''); return l === 'Active screen' ? 'Screen' : l; };
 
 class RoomApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
@@ -189,7 +189,11 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     fit.title=fitLabel;fit.setAttribute('aria-label',fitLabel);
     modeToggle.dataset.mode = mode;
     plan2d.setAttribute('aria-pressed', String(mode === 'plan')); view3d.setAttribute('aria-pressed', String(mode === '3d'));
-    viewHelp.textContent = mode === 'plan' ? 'Drag to place or pan · Scroll to zoom' : 'Drag to orbit · Scroll to zoom';
+    viewHelp.textContent = helpText();
+  }
+  function helpText() {
+    if (view.content.using()) return 'Click outside the screen or press Done to leave';
+    return mode === 'plan' ? 'Drag to place or pan · Scroll to zoom' : 'Drag to orbit · Scroll to zoom';
   }
   async function setMode(next: typeof mode) {
     await view.setView(next);
@@ -381,12 +385,17 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
   /** The scene version a notice with Undo announced; a later edit hides that notice (its Undo would mislead). */
   let undoNoticeAt: number | null = null;
   /** `undo`: the recorded version of the edit the notice announces; its Undo undoes exactly that edit. */
-  function tell(message: string, error = false, undo?: number) {
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+  function tell(message: string, error = false, undo?: number, extra?: { label: string; run: () => void }) {
     notice.classList.toggle('rm-error', error); notice.classList.remove('rm-notice-top'); notice.setAttribute('role', error ? 'alert' : 'status');
     const undoNow = undo !== undefined ? action('Undo', () => { notice.hidden = true; undoNoticeAt = null; void write('undo', { version: undo }); }, undefined, 'rm-text-action') : null;
+    const more = extra ? action(extra.label, extra.run, undefined, 'rm-text-action') : null;
     undoNoticeAt = undo !== undefined ? scene.version : null;
-    notice.replaceChildren(h('span', null, message), ...(undoNow ? [undoNow] : []), iconAction('Dismiss message', () => { notice.hidden = true; }, 'close'));
+    notice.replaceChildren(h('span', null, message), ...(more ? [more] : []), ...(undoNow ? [undoNow] : []), iconAction('Dismiss message', () => { notice.hidden = true; }, 'close'));
     notice.hidden = false;
+    // a notice with Undo goes after 12 s, as other notes do (Undo stays in the panel)
+    clearTimeout(noticeTimer);
+    if (undo !== undefined) { const shown = notice.firstChild; noticeTimer = setTimeout(() => { if (notice.firstChild === shown) { notice.hidden = true; undoNoticeAt = null; } }, 12_000); }
   }
   function command<T>(id: string, args: Args, expectedVersion?: number) {
     return request<Receipt<T>>(api + '/command', { id, args, ...(expectedVersion !== undefined ? { expectedVersion } : {}) });
@@ -475,11 +484,14 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     if (e.defaultPrevented || /^(INPUT|SELECT|TEXTAREA)$/.test((e.target as HTMLElement).tagName)) return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); if (!undo.disabled) undo.click(); }
   });
-  function details(key: string, label: string, children: Node[], hint?: string) {
+  /** Sections the person closed that open by themselves otherwise (Screens). */
+  const collapsed = new Set<string>();
+  function details(key: string, label: string, children: Node[], hint?: string, openFirst = false) {
     const box = h('details', 'rm-disclosure', h('summary', null, h('span', null, label), hint && h('small', null, hint), icon('chevron')), h('div', 'rm-disclosure-body', ...children));
-    box.open = expanded.has(key);
+    box.open = openFirst ? !collapsed.has(key) : expanded.has(key);
     box.addEventListener('toggle', () => {
-      if (box.isConnected) { if (box.open) expanded.add(key); else expanded.delete(key); }
+      if (!box.isConnected) return;
+      if (box.open) { expanded.add(key); collapsed.delete(key); } else { expanded.delete(key); collapsed.add(key); }
     });
     return box;
   }
@@ -659,6 +671,9 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     }
     const inspector = section('Placement', placement);
     const controls = h('div', 'rm-detail-group');
+    // live screen content first and open: the asset's screens are what people come here for
+    const screens = screensSection(item);
+    if (screens && isolated) controls.append(screens);
     const parts = release.members.filter(m => m.kind==='part');
     if (parts.length) {
       const pick = select('Selected component', [{ value: '', label: 'Whole object' }, ...(scene.person?.host === item.id ? [{value:'@operator',label:'Operator'}] : []), ...parts.map(m => ({ value: m.id, label: plainLabel(m.label) }))], member);
@@ -673,8 +688,6 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       controls.append(details(prefix + 'joints', 'Adjustments', [field('Joint', picker), jointForm(item, joint)], String(joints.length)));
     }
     if (view.lampCount(item.id)) controls.append(lampControls(item));
-    const screens = screensSection(item);
-    if (screens) controls.append(screens);
     if (release.seat) controls.append(roomOperatorControls({item,release,scene,apiRoot:api,write,bodySlider:f=>bodySlider(item,version,f),details}));
     const versions = select('Installed release', releases.filter(r => !r.retained || r.id === release.id).map(r => ({ value: r.id, label: shortRelease(r) })), release.id);
     const swap = action('Swap release', () => {
@@ -687,7 +700,7 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       return [section('Asset controls',controls)];
     }
     const clearance = h('div', 'rm-clearance'); readClearance(item, clearance);
-    return [inspector, section('Doorway clearance', clearance), controls];
+    return [inspector, ...(screens ? [h('div', 'rm-detail-group rm-live-group', screens)] : []), section('Doorway clearance', clearance), controls];
   }
   // ---- live screen content: the object's Screens section, the screen card's Shows and View, the hover hint
   const content = view.content;
@@ -702,6 +715,9 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       for (const [frame, ref] of popouts) { const card = cardFor(ref.instance, ref.part, frame); if (card && !frame.querySelector('[data-typing]')) replaceComponentCard(frame, card); }
     }
     for (const line of [...liveLines]) line();
+    // in Use: the footer says how to leave, and a notice must not cover the screen
+    if (viewHelp.textContent !== helpText()) viewHelp.textContent = helpText();
+    if (content.using() && !notice.hidden && !notice.classList.contains('rm-error')) notice.hidden = true;
   });
   const sceneContent = (): SceneContent => scene.content && typeof scene.content === 'object' ? scene.content : { sources: {}, shows: {} };
   /** The address as the server will store it, remembered so that this browser loads it at once. */
@@ -714,17 +730,29 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
   function addressField(instance: string, screen: string | undefined, current: string) {
     const input = h('input'); input.type = 'url'; input.placeholder = 'https://…'; input.value = current; input.maxLength = 2048;
     input.setAttribute('aria-label', 'Web address'); input.dataset.focus = 'live-url/' + instance + '/' + (screen ?? '');
-    const go = h('button', 'rm-button rm-primary', 'Show'); go.type = 'submit';
+    const go = h('button', 'rm-button rm-primary', 'Load'); go.type = 'submit';
     const form = h('form', 'rm-live-address', input, go);
     form.addEventListener('submit', e => {
       e.preventDefault(); const url = input.value.trim(); if (!url) return;
       rememberTyped(url);
-      void contentWrite('content.show', { instance, ...(screen ? { screen } : {}), url });
+      void contentWrite<{ assigned: { screen: string }[] }>('content.show', { instance, ...(screen ? { screen } : {}), url }).then(r => {
+        // without a named screen the server picks the largest: say which
+        const at = r?.result.assigned[0]?.screen;
+        if (r && !screen && at) tell(siteLabel(embeddable(url)) + ' on ' + screenLabel(instance, at), false, r.recorded ?? undefined);
+      });
     });
     return form;
   }
   type Act = { label: string; run: () => void };
-  type Worst = { line: string; act?: Act; also?: Act };
+  type Worst = { line: string; act?: Act; also?: Act; detail?: string; live?: boolean };
+  const screenLabel = (instance: string, screen: string) => plainLabel(content.list()?.screens.find(x => x.instance === instance && x.screen === screen)?.label ?? screen);
+  const sourceLabel = (id: string) => { const src = sceneContent().sources[id]; return src?.kind === 'page' ? siteLabel(src.url) : src?.label ?? id; };
+  /** A fresh run for an app source, with a notice whose Undo brings the earlier run back. */
+  function restart(source: string) {
+    void contentWrite('content.restart', { source }).then(r => {
+      if (r) tell('Restarted ' + sourceLabel(source) + '. A fresh run starts within 30 s.', false, r.recorded ?? undefined);
+    });
+  }
   /** One sentence for a set of screens, with at most one action. */
   function statusOf(keys: string[], card = false): Worst | null {
     if (!keys.length) return null;
@@ -737,11 +765,13 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     const ended = find('ended', 'refused');
     if (ended.length) {
       const source = sourceOf(ended[0]![0]);
-      const restart = source && sceneContent().sources[source]?.kind === 'app' ? { label: 'Restart', run: () => void contentWrite('content.restart', { source }) } : undefined;
-      // a refusal may pass (a busy app, a missing tile): Retry reloads those frames; Restart stays on the card
+      const again = source && sceneContent().sources[source]?.kind === 'app' ? { label: 'Restart', run: () => restart(source) } : undefined;
+      // Synergon's own sentence; the app's line only as a smaller detail, and only when it reads as one.
+      // A refusal may pass (a busy app, a missing tile): Retry reloads those screens; Restart stays on the card.
       const refused = find('refused');
-      if (refused.length) return { line: refused[0]![1].text ?? 'Not answering', act: { label: 'Retry', run: () => { for (const [k] of refused) content.retry(k); } }, also: card ? restart : undefined };
-      return { line: ended[0]![1].text ?? 'Ended', act: restart };
+      if (refused.length) return { line: 'This view could not start.', detail: refused[0]![1].text,
+        act: { label: 'Retry', run: () => { for (const [k] of refused) content.retry(k); } }, also: card ? again : undefined };
+      return { line: 'The scenario has ended.', detail: ended[0]![1].text, act: again };
     }
     const silent = find('not_answering');
     if (silent.length) return { line: 'Not answering', act: { label: 'Retry', run: () => { for (const [k] of silent) content.retry(k); } } };
@@ -751,7 +781,7 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       return { line: 'Content from ' + (host ?? 'another site'), act: origin && content.interactive() ? { label: 'Show', run: () => content.accept(origin) } : undefined };
     }
     const showing = find('showing', 'waiting').length, total = states.length;
-    if (showing === total) return { line: total === 1 ? 'Showing' : 'Showing on ' + total + ' screens' };
+    if (showing === total) return { line: total === 1 ? 'Live' : 'Live on ' + total + ' screens', live: true };
     const starting = total - showing;
     return { line: total === 1 ? 'Starting…' : 'Starting… on ' + starting + ' of ' + total + ' screens' };
   }
@@ -765,8 +795,11 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       const w = statusOf(keys(), card);
       box.hidden = !w;
       if (!w) { box.replaceChildren(); return; }
-      const text = h('span', null); text.textContent = w.line;
-      box.replaceChildren(text, ...[w.act, w.also].filter((a): a is Act => !!a).map(a => action(a.label, a.run, undefined, 'rm-text-action')));
+      const text = h('span', 'rm-live-line'); text.textContent = w.line;
+      box.classList.toggle('rm-live-on', !!w.live);
+      const detail = w.detail ? h('small', 'rm-live-detail') : null;
+      if (detail) detail.textContent = w.detail!;
+      box.replaceChildren(text, ...[w.act, w.also].filter((a): a is Act => !!a).map(a => action(a.label, a.run, undefined, 'rm-text-action')), ...(detail ? [detail] : []));
     };
     liveLines.add(paint); paint(); queueMicrotask(() => { box.dataset.mounted = '1'; });
     return box;
@@ -798,18 +831,27 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       address.hidden = true;
       if (pick.value === 'builtin') { void contentWrite('content.clear', { instance: item.id }); return; }
       const [appId, itemId] = pick.value.slice(5).split('/');
-      const label = l.apps.find(a => a.id === appId)?.items.find(i => i.id === itemId)?.label ?? itemId;
-      void contentWrite<{ assigned: unknown[] }>('content.show', { instance: item.id, item: itemId, app: appId }).then(r => {
-        if (r && r.result.assigned.length > 1) tell(label + ' on ' + r.result.assigned.length + ' screens of ' + item.label, false, r.recorded ?? undefined);
-      });
+      spread(item, appId!, itemId!);
     };
     body.push(address);
-    if (app) body.push(h('div', 'rm-object-actions',
-      action('Restart', () => void contentWrite('content.restart', { source: app[0] }), undefined, 'rm-text-action'),
-      action('Remove', () => void contentWrite('content.clear', { instance: item.id }), undefined, 'rm-text-action')));
-    else if (shown.length) body.push(h('div', 'rm-object-actions', action('Remove', () => void contentWrite('content.clear', { instance: item.id }), undefined, 'rm-text-action')));
+    // (Built-in pictures in the menu removes the content; no separate Remove, which could read as removing the asset)
+    if (app) body.push(h('div', 'rm-live-actions', action('Restart', () => restart(app[0]), undefined, 'rm-text-action')));
     body.push(statusLine(() => offered.filter(x => sceneContent().shows[item.id]?.[x.screen]).map(x => screenKey(item.id, x.screen))));
-    return details(item.id + '/screens', 'Screens', body, app ? app[1].label : page ? 'Web address' : 'Built-in');
+    void shown;
+    return details(item.id + '/screens', 'Screens', body, app ? app[1].label : page ? 'Web address' : 'Built-in', true);
+  }
+  /** An app item over all of an asset's screens; the notice offers Look (when they face away, it says so) and Undo. */
+  function spread(item: RoomInstance, appId: string, itemId: string) {
+    const label = content.list()?.apps.find(a => a.id === appId)?.items.find(i => i.id === itemId)?.label ?? itemId;
+    void contentWrite<{ assigned: { instance: string; screen: string }[] }>('content.show', { instance: item.id, item: itemId, app: appId }).then(async r => {
+      if (!r || !r.result.assigned.length) return;
+      const keys = r.result.assigned.map(a => screenKey(a.instance, a.screen)), n = keys.length;
+      // the frames are placed at the next renders: look then whether any of these screens can be seen
+      for (let i = 0; i < 3; i++) await new Promise(f => requestAnimationFrame(f));
+      const seen = keys.some(k => content.inView(k));
+      tell(label + ' on ' + (n === 1 ? '1 screen' : n + ' screens') + ' of ' + item.label + (seen ? '' : ' (they face away from this view)'),
+        false, r.recorded ?? undefined, view.focusedAsset() === item.id ? undefined : { label: 'Look', run: () => void focusAsset(item.id) });
+    });
   }
   /** The Shows, View, status and Use controls of one offered screen (its component card). */
   function screenControls(item: RoomInstance, part: string): HTMLElement | undefined {
@@ -822,7 +864,7 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     const inScene = Object.entries(c.sources);
     if (inScene.length) {
       const group = h('optgroup'); group.label = 'In this scene';
-      for (const [id, s] of inScene) group.append(new Option(s.label + ' · in this scene', 'source:' + id));
+      for (const [id] of inScene) group.append(new Option(sourceLabel(id), 'source:' + id));
       pick.append(group);
     }
     for (const a of appItems()) {
@@ -854,13 +896,21 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     if (show) {
       box.append(statusLine(() => sceneContent().shows[item.id]?.[part] ? [key] : [], true));
       if (content.interactive()) {
-        const use = action('Use', () => content.use(key), 'cursor', 'rm-live-use');
-        use.title = 'Operate this screen: click, drag and scroll in it. Done, Esc or a click outside leaves.';
+        const use = action('Use', () => { if (content.using() === key) content.done(); else content.use(key); }, 'cursor', 'rm-live-use');
         const sync = () => { if (!use.isConnected && use.dataset.mounted) { liveLines.delete(sync); return; }
-          const s = content.state(key); use.disabled = !(s?.operable && s.state === 'showing'); };
+          const s = content.state(key), active = content.using() === key;
+          use.disabled = !active && !(s?.operable && s.state === 'showing');
+          use.setAttribute('aria-pressed', String(active));
+          use.querySelector('span')!.textContent = active ? 'Done' : 'Use';
+          use.title = active ? 'Leave this screen' : use.disabled ? 'Not showing yet' : 'Operate this screen: click, drag and scroll in it. Done or a click outside leaves.'; };
         liveLines.add(sync); sync(); queueMicrotask(() => { use.dataset.mounted = '1'; });
         box.append(use);
       }
+      // starting from one screen: offer the whole asset when the item has more views and the asset more screens
+      const others = l.screens.filter(x => x.instance === item.id && x.offered);
+      const views = source?.kind === 'app' ? l.apps.find(a => a.id === source.app)?.items.find(i => i.id === source.item)?.views.length ?? 0 : 0;
+      if (source?.kind === 'app' && others.length > 1 && views > 1 && others.some(x => c.shows[item.id]?.[x.screen]?.source !== show.source))
+        box.append(action('Spread over all ' + others.length + ' screens of ' + item.label, () => spread(item, source.app, source.item), undefined, 'rm-text-action rm-live-spread'));
     }
     return box;
   }

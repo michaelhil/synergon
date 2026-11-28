@@ -7,7 +7,7 @@ import * as THREE from "three";
 import { LIVE, type SeenState } from "../../shared/room-content.ts";
 import type { RoomScene } from "../../shared/room.ts";
 import {
-  acceptMessage, FAST_TIMEOUTS, isPhone, liveStorage, MessageGate, PROTOCOL, reportBody, ReportSchedule, resolveShows,
+  acceptMessage, FAST_TIMEOUTS, readableDetail, isPhone, liveStorage, MessageGate, PROTOCOL, reportBody, ReportSchedule, resolveShows,
   ScreenStatus, TIMEOUTS, type ContentListResult, type Reports, type ResolvedShow,
 } from "./room-content.ts";
 import type { PlacedAsset, ScreenLook } from "./room-assets-renderer.ts";
@@ -90,14 +90,15 @@ function sheetCorners(box: THREE.Box3): THREE.Vector3[] {
 
 // ---- plates ------------------------------------------------------------------------------------------------------
 
-interface PlateText { title: string; line: string; dim?: boolean }
+interface PlateText { title: string; line: string; detail?: string; dim?: boolean }
+/** A status plate: neutral light text on a dark plate, large enough to read on a small screen in the overview. */
 function drawPlate(canvas: HTMLCanvasElement, t: PlateText) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  const w = canvas.width, h = canvas.height, m = Math.round(w * 0.06);
+  const w = canvas.width, h = canvas.height, m = Math.round(w * 0.07);
   ctx.fillStyle = FRAMES.plateBackground; ctx.fillRect(0, 0, w, h);
   const font = 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
-  const big = Math.max(14, Math.round(Math.min(h * 0.13, w * 0.055))), small = Math.round(big * 0.72);
+  const big = Math.max(16, Math.round(Math.min(h * 0.15, w * 0.068))), small = Math.round(big * 0.74), tiny = Math.round(big * 0.56);
   const fit = (text: string, size: number, weight: number) => {
     ctx.font = `${weight} ${size}px ${font}`;
     let s = text;
@@ -105,10 +106,18 @@ function drawPlate(canvas: HTMLCanvasElement, t: PlateText) {
     return s;
   };
   ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
-  const top = h / 2 - (t.line ? big * 0.25 : -big * 0.35);
-  ctx.fillStyle = `rgba(255,255,255,${t.dim ? 0.4 : 0.8})`; ctx.fillText(fit(t.title, big, 600), m, top);
-  if (t.line) { ctx.fillStyle = `rgba(255,255,255,${t.dim ? 0.3 : 0.55})`; ctx.fillText(fit(t.line, small, 450), m, top + big * 1.15); }
+  const lines = 1 + (t.line ? 1 : 0) + (t.detail ? 1 : 0), height = big + (t.line ? small * 1.5 : 0) + (t.detail ? tiny * 1.6 : 0);
+  let y = h / 2 - height / 2 + big * 0.8;
+  ctx.fillStyle = `rgba(255,255,255,${t.dim ? 0.45 : 0.92})`; ctx.fillText(fit(t.title, big, 620), m, y);
+  if (t.line) { y += small * 1.5; ctx.fillStyle = `rgba(255,255,255,${t.dim ? 0.35 : 0.74})`; ctx.fillText(fit(t.line, small, 500), m, y); }
+  if (t.detail && lines) { y += tiny * 1.6; ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.fillText(fit(t.detail, tiny, 450), m, y); }
 }
+
+/** Synergon's own sentence for a state (the app's line is only ever a smaller detail). */
+export const SENTENCES = {
+  starting: "Starting…", startingApp: "Starting… (up to 30 s)", notAnswering: "Not answering", notAllowed: "Not allowed here",
+  refused: "This view could not start.", ended: "The scenario has ended.", awaiting: "Select it, then press Show",
+} as const;
 
 // ---- the layer -----------------------------------------------------------------------------------------------------
 
@@ -125,6 +134,8 @@ export interface ContentApi {
   enabled(): boolean; setEnabled(on: boolean): void;
   /** the operable live screen under the pointer */
   hovered(): string | null;
+  /** the screen faces the camera and is in the picture (at the last render) */
+  inView(key: string): boolean;
   /** the last GET …/content */
   list(): ContentListResult | null;
   /** read GET …/content again now */
@@ -260,12 +271,13 @@ export function mountLiveContent(o: LiveContentOptions) {
   function plateText(entry: Entry): PlateText {
     const s = entry.show, state = stateOf(entry);
     if (entry.idle === "capped") return { title: s.label, line: "", dim: true };
-    if (state === "awaiting_click") return { title: s.label, line: "Content from " + (s.host ?? "another site") };
-    if (state === "not_allowed") return { title: s.label, line: "Not allowed here" };
-    if (state === "not_answering") return { title: s.label, line: "Not answering" };
-    if (state === "ended" || state === "refused") return { title: s.label, line: entry.status?.text ?? "Ended" };
+    if (state === "awaiting_click") return { title: s.label, line: SENTENCES.awaiting };
+    if (state === "not_allowed") return { title: s.label, line: SENTENCES.notAllowed };
+    if (state === "not_answering") return { title: s.label, line: SENTENCES.notAnswering };
+    if (state === "refused") return { title: s.label, line: SENTENCES.refused, detail: readableDetail(entry.status?.text) };
+    if (state === "ended") return { title: s.label, line: SENTENCES.ended, detail: readableDetail(entry.status?.text) };
     if (entry.oversize) return { title: s.label, line: s.viewLabel ?? "" };
-    return { title: s.label, line: "Starting…" };
+    return { title: s.label, line: s.kind === "app" ? SENTENCES.startingApp : SENTENCES.starting };
   }
   function plateFor(entry: Entry, t: PlateText): ScreenLook {
     const key = JSON.stringify(t), s = sheet(entry);
@@ -570,8 +582,8 @@ export function mountLiveContent(o: LiveContentOptions) {
     state(key) {
       const entry = entries.get(key);
       if (!entry) return null;
-      const state = stateOf(entry), text = entry.status?.text;
-      return { state, ...(text ? { text: (entry.show.app ? entry.show.app + ": " : "") + text } : {}),
+      const state = stateOf(entry), text = readableDetail(entry.status?.text);
+      return { state, ...(text ? { text } : {}),
         ...(entry.show.host ? { host: entry.show.host } : {}), operable: !framed && !!entry.status?.operable && !!entry.status.hole };
     },
     onChange(cb) { listeners.add(cb); return () => listeners.delete(cb); },
@@ -581,6 +593,7 @@ export function mountLiveContent(o: LiveContentOptions) {
     enabled: () => enabled,
     setEnabled(on) { enabled = on; liveStorage.setEnabled(on); if (!on) done(0); sync(); },
     hovered: () => hoveredKey,
+    inView: key => !!entries.get(key)?.point,
     list: () => list,
     refresh: () => void fetchList(),
     interactive: () => !framed,
