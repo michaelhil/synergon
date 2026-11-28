@@ -15,6 +15,7 @@ import { roomVector } from "../shared/room.ts";
 import { worldFrames } from "../shared/kinematics.ts";
 import { readPackage, type PersonPackage } from "../shared/person-model.ts";
 import type { RoomCatalog, RoomInstance, RoomPoint, RoomRelease } from "../shared/room.ts";
+import { LIVE, type SurfaceInfo } from "../shared/room-content.ts";
 
 type Payload = Map<string, Buffer>;
 type Embedded = { pin: string; files: Record<string,string> };
@@ -27,6 +28,24 @@ const required = (files: Payload, path: string) => {
 };
 const safePath = (s: string) => s.length <= 320 && s.split("/").every(p => /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(p));
 const relative = (p: number[], a: RoomPoint): RoomPoint => [p[0]-a[0], p[1]-a[1], p[2]-a[2]];
+
+/** The S_ screens of a GLB with their node-local extents, from the POSITION accessors' min and max (mandatory in
+ *  glTF) over all primitives of the node's own mesh. A screen node without a mesh is not a content target. */
+function screenExtents(glb: Buffer) {
+  const length = glb.readUInt32LE(12), gltf = JSON.parse(glb.subarray(20, 20 + length).toString());
+  const out: { id: string; min: RoomPoint; max: RoomPoint }[] = [];
+  for (const node of gltf.nodes ?? []) {
+    if (typeof node.name !== "string" || !node.name.startsWith("S_") || node.mesh === undefined) continue;
+    const min: RoomPoint = [Infinity, Infinity, Infinity], max: RoomPoint = [-Infinity, -Infinity, -Infinity];
+    for (const p of gltf.meshes?.[node.mesh]?.primitives ?? []) {
+      const a = gltf.accessors?.[p.attributes?.POSITION];
+      if (!Array.isArray(a?.min) || !Array.isArray(a?.max)) continue;
+      for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], a.min[k]); max[k] = Math.max(max[k], a.max[k]); }
+    }
+    if ([...min, ...max].every(Number.isFinite)) out.push({ id: node.name, min, max });
+  }
+  return out;
+}
 
 export function releaseInventory(payload: Payload) {
   const entries = [...payload].filter(([p]) => p !== "inventory.json").map(([path,bytes]) => {
@@ -76,7 +95,7 @@ function prepareSource(pin:string, payload:Payload) {
     footprint:{min:[min[0]-anchor[0],min[1]-anchor[1]],max:[max[0]-anchor[0],max[1]-anchor[1]]},
   };
   payload.set("inventory.json",inventory.bytes);
-  return { release,info,payload,redistributable:manifest.redistributable !== false && manifest.rights?.redistributable !== false };
+  return { release,info,payload,screens:screenExtents(glb),redistributable:manifest.redistributable !== false && manifest.rights?.redistributable !== false };
 }
 type Source = ReturnType<typeof prepareSource>;
 
@@ -110,6 +129,19 @@ function makeCatalog(sources:Map<string,Source>): RoomCatalog {
   },eye(instance,state) {
     const {info,release} = resolve(instance);
     return relative(seated(info,state,instance.pose).eyes.mid,release.anchor);
+  },surfaces(instance) {
+    // A screen's sheet lies in its node's y–z plane and faces −x: size is [y, z] of the mesh's local extent, flat when
+    // its x extent is under LIVE.flatDepth. facing is in the room frame, centre in the posed asset frame.
+    const {info,release,screens} = resolve(instance), frames = worldFrames(info.nodes,instance.pose);
+    const labels = new Map(release.members.map(m=>[m.id,m.label]));
+    return screens.flatMap(({id,min,max}): SurfaceInfo[] => {
+      const frame = frames[id];
+      if (!frame) return [];
+      const extent = max.map((v,k)=>v-min[k]), middle = max.map((v,k)=>(v+min[k])/2) as RoomPoint;
+      const offset = quatRotate(frame.q,middle), facing = roomVector(instance.yaw,quatRotate(frame.q,[-1,0,0]));
+      return [{ screen:id, label:(labels.get(id) ?? id).replace(/\s*:\s*lit area$/i,""), size:[extent[1],extent[2]],
+        flat:extent[0] < LIVE.flatDepth, facing, centre:relative(frame.t.map((v,k)=>v+offset[k]),release.anchor) }];
+    });
   }};
 }
 
