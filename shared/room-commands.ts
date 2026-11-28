@@ -13,8 +13,18 @@ const nullable = (s: Schema): Schema => ({ anyOf: [s, { type: "null" }] });
 const vector: Schema = { type: "array", items: number, minItems: 3, maxItems: 3 };
 const value: Schema = { anyOf: [number, vector] };
 const ref = object({ instance: text, member: text }, ["instance", "member"]);
+const screenRef = object({ instance: text, screen: text }, ["instance", "screen"]);
 const opening = object({ offset: number, width: number }, ["offset", "width"]);
 const modes = (names: string[]): Schema => ({ type: "string", enum: names });
+// A content block's shape (content.set); its meaning (apps, items, views, addresses, limits) is checked by validateContent.
+const word = (maxLength: number): Schema => ({ type: "string", maxLength });
+const contentBlock = object({
+  sources: { type: "object", additionalProperties: { anyOf: [
+    object({ kind: modes(["app"]), app: word(64), item: word(64), label: word(200), run: object({ key: word(16) }, ["key"]) }, ["kind", "app", "item", "label", "run"]),
+    object({ kind: modes(["page"]), url: word(2048), label: word(200) }, ["kind", "url", "label"]),
+  ] } },
+  shows: { type: "object", additionalProperties: { type: "object", additionalProperties: object({ source: word(64), view: word(64) }, ["source"]) } },
+}, ["sources", "shows"]);
 const hand = nullable({ anyOf: [object({ mode: modes(["rest"]) }, ["mode"]), object({ mode: modes(["point", "touch"]), target: text }, ["mode", "target"])] });
 const foot = nullable({ anyOf: [object({ mode: modes(["floor"]) }, ["mode"]), object({ mode: modes(["on"]), target: text }, ["mode", "target"])] });
 const aims = object({ look: nullable(text), left_hand: hand, right_hand: hand, left_foot: foot, right_foot: foot });
@@ -42,7 +52,14 @@ export const roomCommands = [
     instance: text,
     live: { type: "boolean" },
   }), true),
-  tool("room.set", "Set the rectangular room in metres. Door (south) and window (north) offsets measure east from the west wall.", object({ width: number, depth: number, height: number, door: opening, window: opening }), true),
+  tool("content.list", "Read live screen content: the installation's apps with their items and views, the allowed sites, the scene's sources with their run ids, every screen of the scene's assets (or of one instance) with size, flat, facing, whether it is offered, what it shows, and what each open viewer reports (seen), plus shows waiting for a removed asset or screen.", object({ instance: text })),
+  tool("content.show", "Show one of item (an app item, with app if its id is not unique), url (a web page) or source (one already in the scene) on an instance's flat screens as one undoable edit: with screen (and view for an item) on that screen; without, an item's views go to the largest screens first, then the operator's left to right, and a page to the largest screen; the reply lists assigned, skipped (with why) and unplaced views.", object({ instance: text, screen: text, item: id, app: id, url: { type: "string", maxLength: 2048 },
+    source: id, view: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,64}$" } }, ["instance"]), true),
+  tool("content.move", "Swap what two screens show, or move a show to a screen that shows nothing, as one undoable edit.", object({ from: screenRef, to: screenRef }, ["from", "to"]), true),
+  tool("content.clear", "Give screens back their built-in picture: all of an instance's (also one no longer in the scene), one screen, or every screen showing a source; sources no screen uses any more are removed.", object({ instance: text, screen: text, source: id }), true),
+  tool("content.restart", "Start a fresh run of an app source (a new key, so a new run name); undo rejoins the earlier run.", object({ source: id }, ["source"]), true),
+  tool("content.set", "Replace the scene's whole content block {sources, shows} in one undoable edit, for example to copy a setup from another scene's state; expectedVersion is required.", object({ content: contentBlock }, ["content"]), true),
+  tool("room.set","Set the rectangular room in metres. Door (south) and window (north) offsets measure east from the west wall.", object({ width: number, depth: number, height: number, door: opening, window: opening }), true),
   tool("scene.reset", "Reset the explicit joint settings on one placement or the whole room to their release neutrals. Placement and occupants are preserved. One undo restores all affected settings.", object({instance:text}), true),
   tool("history.list", "Read recent room edits and recorded version numbers, newest first.", object({})),
   tool("undo", "Undo a retained edit by its recorded version, or the latest applicable edit. Disjoint later edits survive.", object({ version }), true),

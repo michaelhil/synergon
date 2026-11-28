@@ -1,0 +1,48 @@
+{
+  "format": "live-surfaces/1",
+  "apps": [
+    {
+      "id": "leitbild",
+      "label": "Leitbild",
+      "origin": "https://leitbild.app",
+      "list": "/api/workspaces/ff425285-7069-458c-82f1-da40271b0d35/world/live-surfaces",
+      "items": [
+        {
+          "id": "offsite-power",
+          "label": "Off-site power restoration",
+          "page": "/workspaces/ff425285-7069-458c-82f1-da40271b0d35/world/runs/run-ext-{run}?item={item}&view={view}&theme=dark",
+          "views": [
+            {
+              "id": "dashboard",
+              "label": "Dashboard"
+            },
+            {
+              "id": "unit-1",
+              "label": "Unit 1 overview"
+            },
+            {
+              "id": "unit-2",
+              "label": "Unit 2 overview"
+            },
+            {
+              "id": "procedures-1",
+              "label": "Unit 1 procedures"
+            },
+            {
+              "id": "grid",
+              "label": "Grid overview"
+            },
+            {
+              "id": "map",
+              "label": "Map"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "publicSites": [
+    "https://www.youtube-nocookie.com",
+    "https://player.vimeo.com"
+  ]
+}
