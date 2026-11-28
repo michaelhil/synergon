@@ -378,9 +378,13 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     if (tab === 'layout') library = false;
     view.select(selected, member || undefined); renderPanel();
   }
-  function tell(message: string, error = false, undoable = false) {
+  /** The scene version a notice with Undo announced; a later edit hides that notice (its Undo would mislead). */
+  let undoNoticeAt: number | null = null;
+  /** `undo`: the recorded version of the edit the notice announces; its Undo undoes exactly that edit. */
+  function tell(message: string, error = false, undo?: number) {
     notice.classList.toggle('rm-error', error); notice.classList.remove('rm-notice-top'); notice.setAttribute('role', error ? 'alert' : 'status');
-    const undoNow = undoable ? action('Undo', () => { notice.hidden = true; void write('undo', {}); }, undefined, 'rm-text-action') : null;
+    const undoNow = undo !== undefined ? action('Undo', () => { notice.hidden = true; undoNoticeAt = null; void write('undo', { version: undo }); }, undefined, 'rm-text-action') : null;
+    undoNoticeAt = undo !== undefined ? scene.version : null;
     notice.replaceChildren(h('span', null, message), ...(undoNow ? [undoNow] : []), iconAction('Dismiss message', () => { notice.hidden = true; }, 'close'));
     notice.hidden = false;
   }
@@ -395,13 +399,13 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       return true;
     } catch (error) { tell(errorText(error), true); return false; }
   }
-  /** A content command: its result, or null after saying why it was refused. */
-  async function contentWrite<T>(id: string, args: Args): Promise<T | null> {
+  /** A content command: its receipt, or null after saying why it was refused. */
+  async function contentWrite<T>(id: string, args: Args): Promise<Receipt<T> | null> {
     try {
       const reply = await command<T>(id, args, scene.version);
       if (reply.version > scene.version) accept(await request<RoomScene>(api + '/state'));
       notice.hidden = true;
-      return reply.result;
+      return reply;
     } catch (error) { tell(errorText(error), true); return null; }
   }
   function afterTyping(container:HTMLElement,refresh:()=>void) {
@@ -423,6 +427,7 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       return;
     }
     if (JSON.stringify(next.lighting) !== JSON.stringify(scene.lighting)) queueMicrotask(lightingChanged);
+    if (undoNoticeAt !== null && next.version > undoNoticeAt) { notice.hidden = true; undoNoticeAt = null; }
     cancelLayoutDrag?.();
     scene = next;
     poseGesture?.accept(next);
@@ -718,9 +723,10 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     });
     return form;
   }
-  type Worst = { line: string; act?: { label: string; run: () => void } };
+  type Act = { label: string; run: () => void };
+  type Worst = { line: string; act?: Act; also?: Act };
   /** One sentence for a set of screens, with at most one action. */
-  function statusOf(keys: string[]): Worst | null {
+  function statusOf(keys: string[], card = false): Worst | null {
     if (!keys.length) return null;
     if (!content.enabled()) return { line: 'Live screen content is off for this browser (Settings).' };
     const states = keys.map(k => [k, content.state(k)] as const).filter(([, s]) => s) as [string, NonNullable<ReturnType<typeof content.state>>][];
@@ -731,7 +737,11 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
     const ended = find('ended', 'refused');
     if (ended.length) {
       const source = sourceOf(ended[0]![0]);
-      return { line: ended[0]![1].text ?? 'Ended', act: source && sceneContent().sources[source]?.kind === 'app' ? { label: 'Restart', run: () => void contentWrite('content.restart', { source }) } : undefined };
+      const restart = source && sceneContent().sources[source]?.kind === 'app' ? { label: 'Restart', run: () => void contentWrite('content.restart', { source }) } : undefined;
+      // a refusal may pass (a busy app, a missing tile): Retry reloads those frames; Restart stays on the card
+      const refused = find('refused');
+      if (refused.length) return { line: refused[0]![1].text ?? 'Not answering', act: { label: 'Retry', run: () => { for (const [k] of refused) content.retry(k); } }, also: card ? restart : undefined };
+      return { line: ended[0]![1].text ?? 'Ended', act: restart };
     }
     const silent = find('not_answering');
     if (silent.length) return { line: 'Not answering', act: { label: 'Retry', run: () => { for (const [k] of silent) content.retry(k); } } };
@@ -748,15 +758,15 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
   const showOf = (key: string) => { const [instance, screen] = key.split('/'); return sceneContent().shows[instance!]?.[screen!]; };
   const sourceOf = (key: string) => showOf(key)?.source;
   const sceneSourceUrl = (key: string) => { const s = sourceOf(key), src = s ? sceneContent().sources[s] : undefined; return src?.kind === 'page' ? src.url : undefined; };
-  function statusLine(keys: () => string[]) {
+  function statusLine(keys: () => string[], card = false) {
     const box = h('div', 'rm-live-status'); box.setAttribute('role', 'status'); box.setAttribute('aria-live', 'polite');
     const paint = () => {
       if (!box.isConnected && box.dataset.mounted) { liveLines.delete(paint); return; }
-      const w = statusOf(keys());
+      const w = statusOf(keys(), card);
       box.hidden = !w;
       if (!w) { box.replaceChildren(); return; }
       const text = h('span', null); text.textContent = w.line;
-      box.replaceChildren(text, ...(w.act ? [action(w.act.label, w.act.run, undefined, 'rm-text-action')] : []));
+      box.replaceChildren(text, ...[w.act, w.also].filter((a): a is Act => !!a).map(a => action(a.label, a.run, undefined, 'rm-text-action')));
     };
     liveLines.add(paint); paint(); queueMicrotask(() => { box.dataset.mounted = '1'; });
     return box;
@@ -790,7 +800,7 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       const [appId, itemId] = pick.value.slice(5).split('/');
       const label = l.apps.find(a => a.id === appId)?.items.find(i => i.id === itemId)?.label ?? itemId;
       void contentWrite<{ assigned: unknown[] }>('content.show', { instance: item.id, item: itemId, app: appId }).then(r => {
-        if (r && r.assigned.length > 1) tell(label + ' on ' + r.assigned.length + ' screens of ' + item.label, false, true);
+        if (r && r.result.assigned.length > 1) tell(label + ' on ' + r.result.assigned.length + ' screens of ' + item.label, false, r.recorded ?? undefined);
       });
     };
     body.push(address);
@@ -842,7 +852,7 @@ function editor(first: RoomScene, releases: RoomRelease[], where: Place, isPubli
       box.append(field('View', viewPick));
     }
     if (show) {
-      box.append(statusLine(() => sceneContent().shows[item.id]?.[part] ? [key] : []));
+      box.append(statusLine(() => sceneContent().shows[item.id]?.[part] ? [key] : [], true));
       if (content.interactive()) {
         const use = action('Use', () => content.use(key), 'cursor', 'rm-live-use');
         use.title = 'Operate this screen: click, drag and scroll in it. Done, Esc or a click outside leaves.';

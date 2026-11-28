@@ -39,7 +39,8 @@ export const FRAMES = {
 } as const;
 const LOOPBACK = ["127.0.0.1", "localhost", "[::1]"];
 const SANDBOX = "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox";
-const ALLOW = "gamepad 'none'; picture-in-picture 'none'; storage-access 'none'; media-playback-while-not-visible 'none'";
+// (no picture-in-picture entry: YouTube's player asks for it and logs a permissions-policy warning when denied)
+const ALLOW = "gamepad 'none'; storage-access 'none'; media-playback-while-not-visible 'none'";
 
 // ---- placement ---------------------------------------------------------------------------------------------------
 
@@ -215,7 +216,7 @@ export function mountLiveContent(o: LiveContentOptions) {
     try { target.postMessage({ protocol: PROTOCOL, ...message }, origin); } catch { /* the page went */ }
   }
   const hello = (entry: Entry) => post(entry, { type: "hello", width: entry.W, height: entry.H,
-    fps: entry.displayed ? FRAMES.fps : 0, use: usingKey === entry.key });
+    fps: wantRate(entry, entry.displayed), use: usingKey === entry.key });
   function makeFrame(entry: Entry) {
     const show = entry.show, el = document.createElement("iframe");
     el.setAttribute("sandbox", SANDBOX + (show.kind === "app" ? " allow-forms" : ""));
@@ -295,7 +296,7 @@ export function mountLiveContent(o: LiveContentOptions) {
     }
   }
   function changed(entry: Entry) {
-    if (entry.el) entry.el.dataset.state = stateOf(entry);
+    if (entry.el) { entry.el.dataset.state = stateOf(entry); setRate(entry, wantRate(entry, entry.displayed)); }
     applyLooks(); report(); notify();
   }
 
@@ -368,6 +369,9 @@ export function mountLiveContent(o: LiveContentOptions) {
   // ---- placement after every render
   const v4 = new THREE.Vector4(), projView = new THREE.Matrix4(), corner = new THREE.Vector3(), normal = new THREE.Vector3();
   const centre = new THREE.Vector3(), toCamera = new THREE.Vector3();
+  /** The rate a frame is told: full while its screen is in sight, and also until the app has first said `live`
+   *  (or ended or refused), so that a page out of sight still starts; 0 only after that. */
+  function wantRate(entry: Entry, inView: boolean) { return inView || !entry.status?.settled ? FRAMES.fps : 0; }
   function setRate(entry: Entry, fps: number) {
     if (entry.rate === fps) return;
     const greeted = entry.status?.ready;
@@ -376,7 +380,7 @@ export function mountLiveContent(o: LiveContentOptions) {
   }
   function hide(entry: Entry) {
     if (entry.el && entry.displayed) { entry.el.style.display = "none"; entry.displayed = false; }
-    if (entry.el) setRate(entry, 0);
+    if (entry.el) setRate(entry, wantRate(entry, false));
   }
   function hideAll() { for (const e of entries.values()) hide(e); }
   function place(camera: THREE.Camera, w: number, h: number) {

@@ -108,6 +108,13 @@ describe("the state of a screen", () => {
     s.onStatus("live"); expect(s.state).toBe("showing");
     s.onStatus("ended", undefined, "Run over"); expect(s.state).toBe("ended"); expect(s.text).toBe("Run over"); expect(s.hole).toBe(false);
   });
+  test("app: settled (rate 0 allowed out of sight) only after its first live, ended or refused", () => {
+    const s = new ScreenStatus("app", 0, t);
+    s.onReady(true); s.onStatus("starting"); s.onStatus("waiting");
+    expect(s.settled).toBe(false);
+    s.onStatus("live"); expect(s.settled).toBe(true);
+    const r = new ScreenStatus("app", 0, t); r.onStatus("refused", undefined, "Busy"); expect(r.settled).toBe(true);
+  });
   test("app: no ready in 30 s is Not answering; a late ready recovers", () => {
     const s = new ScreenStatus("app", 1000, t);
     expect(s.tick(30_999)).toBe(false);

@@ -39,15 +39,17 @@ const PAGE = String.raw`<!doctype html><html lang="en"><head><meta charset="utf-
   let parent = "";
   try { const r = new URL(document.referrer); if (/^(127\.0\.0\.1|localhost|\[::1\])$/.test(r.hostname)) parent = r.origin; } catch (e) {}
   const send = m => { if (parent && window.parent !== window) window.parent.postMessage({ protocol: PROTOCOL, ...m }, parent); };
-  let fps = 30, using = false, live = false;
+  let fps = 30, using = false, live = false, started = false, pending = false;
   if (greet) {
     addEventListener("message", e => {
       if (e.origin !== parent || e.source !== window.parent || !e.data || e.data.protocol !== PROTOCOL) return;
       const m = e.data; log("message:" + m.type, { fps: m.fps, active: m.active, width: m.width, height: m.height });
-      if (m.type === "hello" && !live) { send({ type: "status", state: "starting", run: "run-ext-" + run, view });
-        setTimeout(() => { live = true; document.getElementById("state").textContent = "Live"; send({ type: "status", state: "live", run: "run-ext-" + run, view }); }, 300); }
-      if (m.type === "hello" && live) send({ type: "status", state: "live", run: "run-ext-" + run, view });
-      if (m.type === "rate") fps = m.fps;
+      // like Leitbild: "live" is said only once the page has drawn, and a page told rate 0 does not draw
+      if (m.type === "hello" || m.type === "rate") fps = typeof m.fps === "number" ? m.fps : fps;
+      const goLive = () => { if (live) return; if (fps > 0) { live = true; document.getElementById("state").textContent = "Live"; send({ type: "status", state: "live", run: "run-ext-" + run, view }); } else pending = true; };
+      if (m.type === "hello" && !live && !started) { started = true; send({ type: "status", state: "starting", run: "run-ext-" + run, view }); setTimeout(goLive, 300); }
+      else if (m.type === "hello" && live) send({ type: "status", state: "live", run: "run-ext-" + run, view });
+      if (m.type === "rate" && fps > 0 && pending) { pending = false; goLive(); }
       if (m.type === "use") { using = !!m.active; document.body.classList.toggle("use", using); }
     });
     send({ type: "ready", v: 1, pixels: false, operable: true });

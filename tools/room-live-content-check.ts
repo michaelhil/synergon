@@ -122,6 +122,25 @@ try {
   const notice = await A.evaluate("document.querySelector('.rm-notice')?.innerText || ''") as string;
   step(!!starting && !!live && (await A.evaluate("document.querySelectorAll('.rv-frames iframe').length")) === 5 && /Demo item on 5 screens of Operator desk/.test(notice) && /Undo/.test(notice),
     "Screens › Demo item: five frames, Starting… then live holes, keyboard panel kept, notice with Undo", notice.replace(/\s+/g, " "));
+  // D1: the desk faces away in the opening view, so these screens went live out of sight (the fake app, like Leitbild,
+  // says live only after drawing, which rate 0 stops); only after that were they told rate 0
+  const unseen = await A.evaluate(`(() => { const d = window.__synergonLive(); return ${JSON.stringify(desk)}.every(k => !d[k].displayed); })()`);
+  const rates = (await events()).filter(e => e.type === "message:rate").map(e => (e as unknown as { fps: number }).fps);
+  step(!!live && unseen && rates.includes(0), "screens out of sight still go live, and are told rate 0 only afterwards", `rates ${rates.join(",")}`);
+  // D2: the notice's Undo undoes the edit it announced, by its recorded version; another edit hides the notice
+  await A.evaluate(`window.__sent = []; const f0 = window.fetch; window.fetch = (u, o) => { if (o?.body) __sent.push(String(o.body)); return f0(u, o); }`);
+  await A.evaluate(`[...document.querySelectorAll('.rm-notice button')].find(b => b.textContent === 'Undo').click()`);
+  const undone = await until(A, `Object.keys(window.__synergonLive()).filter(k => k.startsWith('desk-a/')).length === 0`, 4000);
+  const undoBody = JSON.parse((await A.evaluate(`__sent.find(b => b.includes('"undo"')) || 'null'`)) as string) as { args?: { version?: unknown } } | null;
+  await A.evaluate(`(() => { const s = [...document.querySelectorAll('summary')].find(s => s.textContent.startsWith('Screens')); s.parentElement.open = true;
+    const pick = document.querySelector('select[aria-label="Screens"]'); pick.value = 'item:fake/demo'; pick.dispatchEvent(new Event('change')); })()`);
+  const again = await until(A, `/on 5 screens/.test(document.querySelector('.rm-notice:not([hidden])')?.innerText || '')`, 6000);
+  const other = (await command("state", {})).result.scene.instances.find((i: { id: string }) => i.id === "station-b");
+  await command("instances.move", { instance: "station-b", x: other.x + 0.01 });
+  const hidden = await until(A, `document.querySelector('.rm-notice').hidden`, 3000);
+  await until(A, `(() => { const d = window.__synergonLive(); return ${JSON.stringify(desk)}.every(k => d[k]?.state === 'showing'); })()`, 10_000);
+  step(!!undone && typeof undoBody?.args?.version === "number" && !!again && !!hidden,
+    "the notice's Undo undoes the announced edit by its version; a later edit hides the notice", JSON.stringify(undoBody));
   // see the desk's screens
   await A.evaluate(`document.querySelector('[aria-label="View scope"]').click()`);
   await until(A, `document.querySelector('[aria-label="Focus on Operator desk"]')`);

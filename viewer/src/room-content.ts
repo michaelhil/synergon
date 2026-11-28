@@ -101,6 +101,9 @@ export class ScreenStatus {
   run?: string;
   ready = false;
   loaded = false;
+  /** The app has said `live`, `ended` or `refused` once: from then on an out-of-sight frame may be told `rate 0`
+   *  (an app may report `live` only after it has drawn, which a paused page never does). */
+  settled = false;
   operable: boolean;
   private shown = false;
   constructor(readonly kind: "app" | "page", private started: number, private t: Timeouts = TIMEOUTS) {
@@ -129,6 +132,7 @@ export class ScreenStatus {
     if (run !== undefined) this.run = run;
     if (this.kind === "page") return runChanged;
     this.ready = true;
+    if (state === "live" || state === "ended" || state === "refused") this.settled = true;
     let changed: boolean;
     if (state === "live") { this.shown = true; changed = this.set("showing"); }
     else if (state === "waiting") changed = this.set(this.shown ? "waiting" : "starting");
