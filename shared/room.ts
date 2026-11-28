@@ -4,7 +4,7 @@ import type { OperatorOptions,OperatorPatch } from "./room-person.ts";
 import type { ProjectTransfer } from "./project.ts";
 import type { PersonState } from "./commands/doc.ts";
 import type { JointValue, JointType } from "./pose.ts";
-import type { SceneContent } from "./room-content.ts";
+import type { SceneContent, SurfaceInfo } from "./room-content.ts";
 
 export const ROOM_SCHEMA = "synergon-room/1" as const;
 
@@ -88,6 +88,8 @@ export interface RoomCatalog {
   operatorOptions?(instance:RoomInstance, state:PersonState):OperatorOptions;
   defaultPerson?(instance: RoomInstance): PersonState;
   eye?(instance: RoomInstance, state: PersonState): RoomPoint;
+  /** The release's S_ screens with their posed size, flatness and facing (live screen content). */
+  surfaces?(instance: RoomInstance): SurfaceInfo[];
 }
 
 export function roomVector(yaw:number, local:RoomPoint): RoomPoint {
