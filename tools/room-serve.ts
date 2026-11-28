@@ -13,7 +13,7 @@ import { runtimeParams } from "./bundle.ts";
 import { ROOT } from "./timeline.ts";
 
 /** Pages of the local installation may frame any https page and loopback http (live screen content, §3.12). */
-export const LOCAL_FRAME_POLICY = "frame-src https: http://127.0.0.1:* http://localhost:* http://[::1]:*";
+export const LOCAL_FRAME_POLICY = "frame-src https: http://127.0.0.1:* http://localhost:*";
 
 /** `apps` replaces the apps of live screen content (tests; otherwise server/live-apps.json or SYNERGON_APPS). */
 export async function serveRoom({ port, dataDir, emptyLibrary = false, apps }: { port: number; dataDir: string; emptyLibrary?: boolean; apps?: LiveApp[] }) {
